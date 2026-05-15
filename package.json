@@ -1,0 +1,39 @@
+{
+   "name": "slefcode-instructor-server",
+   "version": "1.0.0",
+   "description": "slefcode-instructor-server",
+   "main": "src/index.js",
+   "scripts": {
+      "dev": "node --watch src/index.js",
+      "start": "node src/index.js",
+      "test": "mocha test/mocha.js",
+      "artillery": "artillery run test/load.yml",
+      "prettier-check": "prettier --config .prettierrc **/**/*.js --check",
+      "prettier-format": "prettier --config .prettierrc **/**/*.js --write",
+      "lint": "eslint src/**/*.js",
+      "lint-fix": "eslint --fix src/**/*.js"
+   },
+   "keywords": [],
+   "author": "",
+   "license": "ISC",
+   "dependencies": {
+      "amazon-cognito-identity-js": "^6.3.16",
+      "bcrypt": "^6.0.0",
+      "dotenv": "^17.2.3",
+      "express": "^5.2.1",
+      "helmet": "^8.1.0",
+      "joi": "^18.0.2",
+      "jsonwebtoken": "^9.0.3",
+      "jwt-decode": "^4.0.0",
+      "mongoose": "^9.1.5",
+      "node-cron": "^4.2.1",
+      "winston": "^3.19.0"
+   },
+   "devDependencies": {
+      "eslint": "^9.39.2",
+      "eslint-config-prettier": "^10.1.8",
+      "eslint-plugin-import": "^2.32.0",
+      "eslint-plugin-prettier": "^5.5.5",
+      "prettier": "^3.8.1"
+   }
+}
