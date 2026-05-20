@@ -28,18 +28,25 @@ const getAllCourses = async (req, res, next) => {
 
 const getCourse = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
-    const { page, limit, search, status, sort_by, monthFilter, yearFilter } =
-      req.query;
+    const {
+      page,
+      limit,
+      search,
+      status,
+      monthFilter,
+      yearFilter,
+      instructor_id,
+      student_id,
+    } = req.query;
     const data = await courseService.getCourse(
       instructor_id,
       page,
       limit,
       search,
       status, //"published", "draft"
-      sort_by,
       monthFilter,
-      yearFilter
+      yearFilter,
+      student_id
     );
     return successHandler(data, req, res, next);
   } catch (error) {

@@ -4,8 +4,17 @@ const { successHandler, errorHandler } = require("../../packages/handlers");
 const { aws } = require("../../packages/config");
 const signUp = async (req, res, next) => {
   try {
-    const { first_name, last_name, email, password, phone_no, gender, about,country,state } =
-      req.body;
+    const {
+      first_name,
+      last_name,
+      email,
+      password,
+      phone_no,
+      gender,
+      about,
+      country,
+      state,
+    } = req.body;
 
     const poolData = {
       UserPoolId: aws.cognito.userpool,
@@ -43,8 +52,6 @@ const signUp = async (req, res, next) => {
     //     Value: `+91${Number(phone_no)}`,
     //   })
     // );
-
-
 
     userPool.signUp(email, password, attributeList, null, async (err, data) => {
       if (err) {
@@ -85,7 +92,6 @@ const signUp = async (req, res, next) => {
     );
   }
 };
-
 
 const login = async (req, res, next) => {
   try {
@@ -160,12 +166,17 @@ const login = async (req, res, next) => {
     );
   }
 };
-const getProfile = async (req, res, next) => {
+const getStudentList = async (req, res, next) => {
   try {
-    const  student_id  = req.data.sub;
-    // console.log("----------",student_id)
-    // const {page,limit} = req.query;
-    const data = await studentService.getProfile(student_id);
+    const { page, limit, monthFilter, yearFilter, status, search } = req.query;
+    const data = await studentService.getStudentList(
+      page,
+      limit,
+      monthFilter,
+      yearFilter,
+      status,
+      search
+    );
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -182,7 +193,7 @@ const getProfile = async (req, res, next) => {
 
 const updateProfile = async (req, res, next) => {
   try {
-    const student_id  = req.data.sub;
+    const student_id = req.data.sub;
     const { first_name, last_name, phone_no, avatar, gender } = req.body;
     const data = await studentService.updateProfile(
       student_id,
@@ -192,6 +203,24 @@ const updateProfile = async (req, res, next) => {
       avatar,
       gender
     );
+    return successHandler(data, req, res, next);
+  } catch (err) {
+    return errorHandler(
+      {
+        status: 412,
+        message: err.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
+const getCourse = async (req, res, next) => {
+  try {
+    const { student_id, page, limit } = req.query;
+    const data = await studentService.getCourse(student_id, page, limit);
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -255,7 +284,7 @@ const changePassword = async (req, res, next) => {
 
 const purchaseCourse = async (req, res, next) => {
   try {
-    const  student_id  = req.data.sub;
+    const student_id = req.data.sub;
     const { course_id, transaction_id, method, amount } = req.body;
     const data = await studentService.purchaseCourse(
       student_id,
@@ -280,7 +309,7 @@ const purchaseCourse = async (req, res, next) => {
 
 const studentActivity = async (req, res, next) => {
   try {
-    const student_id  = req.data.sub;
+    const student_id = req.data.sub;
     const { page, limit } = req.query;
     const data = await studentService.studentActivity(student_id, page, limit);
     return successHandler(data, req, res, next);
@@ -299,7 +328,7 @@ const studentActivity = async (req, res, next) => {
 
 const studentPurchases = async (req, res, next) => {
   try {
-    const student_id  = req.data.sub;
+    const student_id = req.data.sub;
     const { page, limit } = req.query;
     const data = await studentService.studentPurchases(student_id, page, limit);
     return successHandler(data, req, res, next);
@@ -319,12 +348,13 @@ const studentPurchases = async (req, res, next) => {
 module.exports = {
   signUp,
   login,
-  getProfile,
+  getStudentList,
   updateProfile,
+  getCourse,
   forgetPassword,
   verifyOtp,
   changePassword,
   purchaseCourse,
   studentActivity,
-  studentPurchases
+  studentPurchases,
 };

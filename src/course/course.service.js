@@ -95,38 +95,40 @@ const getCourse = async (
   status,
   sort_by,
   monthFilter,
-  yearFilter
+  yearFilter,
+  student_id
 ) => {
   try {
     const skip = (page - 1) * limit;
-    let checkMatch = {};
+    let checkMatch = {},
+      statusMatch = {};
 
     if (search) {
       checkMatch.course_title = new RegExp(`^${search}`, "i");
     }
 
-    if (status === "published") {
-      checkMatch.course_status = "published";
-    } else if (status === "inreview") {
-      checkMatch.course_status = "inreview";
-    } else if (status === "draft") {
-      checkMatch.course_status = "draft";
-    } else if (status === "recent") {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      checkMatch.createdAt = { $gte: sevenDaysAgo };
+    if (instructor_id) {
+      checkMatch.instructor_id = instructor_id;
     }
 
-    let sortStage = {};
-    if (sort_by === "top") {
-      sortStage = { $sort: { total_enrolled: -1 } };
-    } else if (sort_by === "recent") {
-      sortStage = { $sort: { createdAt: -1 } };
-    } else if (sort_by === "oldest") {
-      sortStage = { $sort: { createdAt: 1 } };
-    } else {
-      sortStage = { $sort: { createdAt: -1 } };
+    if (status === "published") {
+      statusMatch.course_status = "published";
+    } else if (status === "inreview") {
+      statusMatch.course_status = "inreview";
+    } else if (status === "rejected") {
+      statusMatch.course_status = "rejected";
     }
+
+    // let sortStage = {};
+    // if (sort_by === "top") {
+    //   sortStage = { $sort: { total_enrolled: -1 } };
+    // } else if (sort_by === "recent") {
+    //   sortStage = { $sort: { createdAt: -1 } };
+    // } else if (sort_by === "oldest") {
+    //   sortStage = { $sort: { createdAt: 1 } };
+    // } else {
+    //   sortStage = { $sort: { createdAt: -1 } };
+    // }
 
     let timeCheck = {};
 
@@ -154,7 +156,12 @@ const getCourse = async (
 
     const getCoursePayload = await course.aggregate([
       {
-        $match: { instructor_id: instructor_id, ...checkMatch, ...timeCheck },
+        $match: {
+          course_status: { $ne: "draft" },
+          ...checkMatch,
+          ...timeCheck,
+          ...statusMatch,
+        },
       },
       {
         $lookup: {
@@ -223,189 +230,196 @@ const getCourse = async (
               },
             },
           },
-          completed_count: {
-            $size: {
-              $filter: {
-                input: "$completions",
-                as: "c",
-                cond: { $eq: ["$$c.course_status", "complete"] },
-              },
-            },
-          },
-          completion_rate: {
-            $cond: {
-              if: { $gt: [{ $size: "$completions" }, 0] },
-              then: {
-                $multiply: [
-                  {
-                    $divide: [
-                      {
-                        $size: {
-                          $filter: {
-                            input: "$completions",
-                            as: "c",
-                            cond: { $eq: ["$$c.course_status", "complete"] },
-                          },
-                        },
-                      },
-                      { $size: "$completions" },
-                    ],
-                  },
-                  100,
-                ],
-              },
-              else: 0,
-            },
-          },
+          // completed_count: {
+          //   $size: {
+          //     $filter: {
+          //       input: "$completions",
+          //       as: "c",
+          //       cond: { $eq: ["$$c.course_status", "complete"] },
+          //     },
+          //   },
+          // },
+          // completion_rate: {
+          //   $cond: {
+          //     if: { $gt: [{ $size: "$completions" }, 0] },
+          //     then: {
+          //       $multiply: [
+          //         {
+          //           $divide: [
+          //             {
+          //               $size: {
+          //                 $filter: {
+          //                   input: "$completions",
+          //                   as: "c",
+          //                   cond: { $eq: ["$$c.course_status", "complete"] },
+          //                 },
+          //               },
+          //             },
+          //             { $size: "$completions" },
+          //           ],
+          //         },
+          //         100,
+          //       ],
+          //     },
+          //     else: 0,
+          //   },
+          // },
         },
       },
-      {
-        $setWindowFields: {
-          sortBy: { total_enrolled: -1 },
-          output: {
-            enrollment_rank: { $rank: {} },
-          },
-        },
-      },
-      {
-        $addFields: {
-          top_seller: {
-            $and: [
-              { $lte: ["$enrollment_rank", 3] },
-              { $gt: ["$total_enrolled", 0] },
-            ],
-          },
-        },
-      },
-      {
-        $addFields: {
-          // sort chapters by rank first
-          sorted_chapters: {
-            $sortArray: {
-              input: "$chapters",
-              sortBy: { chapter_rank: 1 },
-            },
-          },
+      // {
+      //   $setWindowFields: {
+      //     sortBy: { total_enrolled: -1 },
+      //     output: {
+      //       enrollment_rank: { $rank: {} },
+      //     },
+      //   },
+      // },
+      // {
+      //   $addFields: {
+      //     top_seller: {
+      //       $and: [
+      //         { $lte: ["$enrollment_rank", 3] },
+      //         { $gt: ["$total_enrolled", 0] },
+      //       ],
+      //     },
+      //   },
+      // },
+      // {
+      //   $addFields: {
+      //     // sort chapters by rank first
+      //     sorted_chapters: {
+      //       $sortArray: {
+      //         input: "$chapters",
+      //         sortBy: { chapter_rank: 1 },
+      //       },
+      //     },
 
-          // sort topics (important!)
-          sorted_topics: {
-            $sortArray: {
-              input: "$topic",
-              sortBy: { topic_rank: 1 },
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          current_chapter: {
-            $arrayElemAt: ["$sorted_chapters", 0],
-          },
-          next_chapter: {
-            $arrayElemAt: ["$sorted_chapters", 1],
-          },
-        },
-      },
-      {
-        $addFields: {
-          current_chapter: {
-            chapter_id: "$current_chapter.chapter_id",
-            chapter_rank: "$current_chapter.chapter_rank",
-            chapter_title: "$current_chapter.chapter_title",
-            chapter_duration: "$current_chapter.chapter_duration",
+      //     // sort topics (important!)
+      //     sorted_topics: {
+      //       $sortArray: {
+      //         input: "$topic",
+      //         sortBy: { topic_rank: 1 },
+      //       },
+      //     },
+      //   },
+      // },
+      // {
+      //   $addFields: {
+      //     current_chapter: {
+      //       $arrayElemAt: ["$sorted_chapters", 0],
+      //     },
+      //     next_chapter: {
+      //       $arrayElemAt: ["$sorted_chapters", 1],
+      //     },
+      //   },
+      // },
+      // {
+      //   $addFields: {
+      //     current_chapter: {
+      //       chapter_id: "$current_chapter.chapter_id",
+      //       chapter_rank: "$current_chapter.chapter_rank",
+      //       chapter_title: "$current_chapter.chapter_title",
+      //       chapter_duration: "$current_chapter.chapter_duration",
 
-            current_topic_id: {
-              $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 0] }, null],
-            },
-            next_topic_id: {
-              $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 1] }, null],
-            },
-          },
-          next_chapter: {
-            chapter_id: "$next_chapter.chapter_id",
-            chapter_rank: "$next_chapter.chapter_rank",
-            chapter_title: "$next_chapter.chapter_title",
-            chapter_duration: "$next_chapter.chapter_duration",
-          },
-        },
-      },
-      sortStage,
+      //       current_topic_id: {
+      //         $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 0] }, null],
+      //       },
+      //       next_topic_id: {
+      //         $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 1] }, null],
+      //       },
+      //     },
+      //     next_chapter: {
+      //       chapter_id: "$next_chapter.chapter_id",
+      //       chapter_rank: "$next_chapter.chapter_rank",
+      //       chapter_title: "$next_chapter.chapter_title",
+      //       chapter_duration: "$next_chapter.chapter_duration",
+      //     },
+      //   },
+      // },
+      { $sort: { createdAt: -1 } },
       { $skip: skip },
       { $limit: Number(limit) },
       {
         $project: {
           _id: 0,
+          instructor_id: { $ifNull: ["$instructor_id", ""] },
           course_id: { $ifNull: ["$course_id", ""] },
           course_title: { $ifNull: ["$course_title", ""] },
           course_description: { $ifNull: ["$course_description", ""] },
           course_thumbnail: { $ifNull: ["$course_thumbnail", ""] },
           course_price: { $ifNull: ["$course_price", 0] },
-          course_price_type: { $ifNull: ["$course_price_type", ""] },
-          course_status: { $ifNull: ["$course_status", ""] },
           category_name: { $ifNull: ["$category_name", ""] },
+          course_status: { $ifNull: ["$course_status", ""] },
           course_review_date: { $ifNull: ["$course_review_date", null] },
+          course_publish_date: { $ifNull: ["$course_publish_date", null] },
           sub_category_name: { $ifNull: ["$sub_category_name", ""] },
-          total_enrolled: { $ifNull: ["$total_enrolled", 0] },
-          completed_count: { $ifNull: ["$completed_count", 0] },
-          completion_rate: {
-            $round: [{ $ifNull: ["$completion_rate", 0] }, 0],
-          },
-          course_total_rating: { $ifNull: ["$course_total_rating", 0] },
-          reviewed_by: { $ifNull: ["$reviewed_by", 0] },
-          // total_lessons: { $ifNull: ["$total_lessons", 0] },
-          // total_quizzes: { $ifNull: ["$total_quizzes", 0] },
+          reviewed_by: { $ifNull: ["$reviewed_by", null] },
           createdAt: { $ifNull: ["$createdAt", null] },
-          top_seller: { $ifNull: ["$top_seller", false] },
           chapter_count: { $ifNull: ["$chapter_count", 0] },
           quiz_count: { $ifNull: ["$quiz_count", 0] },
           course_duration: { $ifNull: ["$course_duration", 0] },
-          total_revenue: { $ifNull: ["$total_revenue", 0] },
-          next_chapter: {
-            chapter_id: { $ifNull: ["$next_chapter.chapter_id", null] },
-            chapter_rank: { $ifNull: ["$next_chapter.chapter_rank", null] },
-            chapter_title: { $ifNull: ["$next_chapter.chapter_title", null] },
-            chapter_duration: {
-              $ifNull: ["$next_chapter.chapter_duration", null],
-            },
-          },
-          current_chapter: {
-            chapter_id: { $ifNull: ["$current_chapter.chapter_id", null] },
-            chapter_rank: { $ifNull: ["$current_chapter.chapter_rank", null] },
-            chapter_title: {
-              $ifNull: ["$current_chapter.chapter_title", null],
-            },
-            chapter_duration: {
-              $ifNull: ["$current_chapter.chapter_duration", null],
-            },
-            current_topic_id: {
-              $ifNull: ["$current_chapter.current_topic_id", null],
-            },
-            next_topic_id: {
-              $ifNull: ["$current_chapter.next_topic_id", null],
-            },
-          },
+          total_enrolled: { $ifNull: ["$total_enrolled", 0] },
+          // course_price_type: { $ifNull: ["$course_price_type", ""] },
+          // course_status: { $ifNull: ["$course_status", ""] },
+
+          // completed_count: { $ifNull: ["$completed_count", 0] },
+          // completion_rate: {
+          //   $round: [{ $ifNull: ["$completion_rate", 0] }, 0],
+          // },
+          // course_total_rating: { $ifNull: ["$course_total_rating", 0] },
+
+          // total_lessons: { $ifNull: ["$total_lessons", 0] },
+          // total_quizzes: { $ifNull: ["$total_quizzes", 0] },
+          // top_seller: { $ifNull: ["$top_seller", false] },
+          // total_revenue: { $ifNull: ["$total_revenue", 0] },
+          // next_chapter: {
+          //   chapter_id: { $ifNull: ["$next_chapter.chapter_id", null] },
+          //   chapter_rank: { $ifNull: ["$next_chapter.chapter_rank", null] },
+          //   chapter_title: { $ifNull: ["$next_chapter.chapter_title", null] },
+          //   chapter_duration: {
+          //     $ifNull: ["$next_chapter.chapter_duration", null],
+          //   },
+          // },
+          // current_chapter: {
+          //   chapter_id: { $ifNull: ["$current_chapter.chapter_id", null] },
+          //   chapter_rank: { $ifNull: ["$current_chapter.chapter_rank", null] },
+          //   chapter_title: {
+          //     $ifNull: ["$current_chapter.chapter_title", null],
+          //   },
+          //   chapter_duration: {
+          //     $ifNull: ["$current_chapter.chapter_duration", null],
+          //   },
+          //   current_topic_id: {
+          //     $ifNull: ["$current_chapter.current_topic_id", null],
+          //   },
+          //   next_topic_id: {
+          //     $ifNull: ["$current_chapter.next_topic_id", null],
+          //   },
+          // },
         },
       },
     ]);
+
     const count = await course.countDocuments({
-      instructor_id: instructor_id,
+      course_status: { $ne: "draft" },
       ...checkMatch,
       ...timeCheck,
     });
-    const draftCount = await course.countDocuments({
-      instructor_id: instructor_id,
-      course_status: "draft",
-      ...timeCheck,
-    });
+
     const publishedCount = await course.countDocuments({
-      instructor_id: instructor_id,
       course_status: "published",
       ...timeCheck,
+      ...checkMatch,
     });
     const reviewCount = await course.countDocuments({
-      instructor_id: instructor_id,
       course_status: "inreview",
       ...timeCheck,
+      ...checkMatch,
+    });
+    const rejectedCount = await course.countDocuments({
+      course_status: "rejected",
+      ...timeCheck,
+      ...checkMatch,
     });
 
     const response = getCoursePayload.length
@@ -413,10 +427,9 @@ const getCourse = async (
           status: 200,
           message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
           count: count,
-          allCount: draftCount + reviewCount + publishedCount,
           publishedCount: publishedCount,
-          draftCount: draftCount,
           reviewCount: reviewCount,
+          rejectedCount: rejectedCount,
           data: getCoursePayload,
         }
       : {

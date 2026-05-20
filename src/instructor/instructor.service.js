@@ -6,15 +6,12 @@ const jwtoken = require("jsonwebtoken");
 const instructor = require("../model/instructor.model");
 const activityModel = require("../model/activity.model");
 const { getMonthMap } = require("../../packages/handlers");
-// const purchase = require("../model/purchase.model");
-// const course = require("../model/course.model");
-// const courseCompletionModel = require("../model/courseCompletion.model");
-
 const purchase = require("../model/purchase.model");
 const course = require("../model/course.model");
 const courseCompletionModel = require("../model/courseCompletion.model");
 const revenueModel = require("../model/revenue.model");
 const courseModel = require("../model/course.model");
+const instructorModel = require("../model/instructor.model");
 
 const authToken = async (employee_id) => {
   let jwtSecretKey = jwt.secretKey;
@@ -29,15 +26,18 @@ mongoManager.connect();
 
 const getInstructorByEmail = async (email) => {
   try {
-    const instructorData = await instructor.findOne(
-      { instructor_email: email },
-      { _id: 0, instructor_id: 1, instructor_email: 1, instructor_role: 1 }
-    ).lean();
+    const instructorData = await instructor
+      .findOne(
+        { instructor_email: email },
+        { _id: 0, instructor_id: 1, instructor_email: 1, instructor_role: 1 }
+      )
+      .lean();
     return instructorData;
   } catch (error) {
     return null;
   }
 };
+
 const addInstructor = async (
   admin_id,
   name,
@@ -116,19 +116,62 @@ const addInstructor = async (
   }
 };
 
-const getInstructorProfile = async (instructor_id) => {
+const getInstructor = async (
+  instructor_id,
+  page,
+  limit,
+  yearFilter,
+  monthFilter,
+  status,
+  sort_by
+) => {
   try {
-    const getProfilePayload = await instructor.aggregate([
-      {
-        $match: { instructor_id: instructor_id },
-      },
-      {
-        $lookup: {
-          from: "reviews",
-          localField: "instructor_id",
-          foreignField: "instructor_id",
-          as: "reviews",
+    const skip = (page - 1) * limit;
+    let checkMatch;
+
+    if (instructor_id) {
+      checkMatch = { instructor_id: instructor_id };
+    }
+    let sortStage = {};
+    if (sort_by) {
+      if (sort_by === "new") {
+        sortStage = { $sort: { createdAt: -1 } };
+      } else if (sort_by === "top") {
+        sortStage = { $sort: { total_student: -1 } };
+      }
+    }
+
+    if (status) {
+      checkMatch = { instructor_status: status };
+    }
+
+    let timeCheck = {};
+
+    if (monthFilter || yearFilter) {
+      const dateConditions = [];
+      monthFilter = await getMonthMap(monthFilter);
+      if (monthFilter) {
+        dateConditions.push({
+          $eq: [{ $month: "$createdAt" }, Number(monthFilter)],
+        });
+      }
+
+      if (yearFilter) {
+        dateConditions.push({
+          $eq: [{ $year: "$createdAt" }, Number(yearFilter)],
+        });
+      }
+
+      timeCheck = {
+        $expr: {
+          $and: dateConditions,
         },
+      };
+    }
+
+    const getInstructorList = await instructor.aggregate([
+      {
+        $match: { ...checkMatch, ...timeCheck },
       },
       {
         $lookup: {
@@ -155,6 +198,15 @@ const getInstructorProfile = async (instructor_id) => {
         },
       },
       {
+        $addFields: {
+          course_count: { $size: { $ifNull: ["$courses", []] } },
+          total_student: { $size: { $ifNull: ["$purchases", []] } },
+        },
+      },
+      ...(Object.keys(sortStage).length ? [sortStage] : []),
+      { $skip: Number(skip) },
+      { $limit: Number(limit) },
+      {
         $project: {
           _id: 0,
           instructor_id: { $ifNull: ["$instructor_id", ""] },
@@ -165,54 +217,46 @@ const getInstructorProfile = async (instructor_id) => {
           instructor_avatar: { $ifNull: ["$instructor_avatar", ""] },
           instructor_gender: { $ifNull: ["$instructor_gender", ""] },
           instructor_about: { $ifNull: ["$instructor_about", ""] },
+          instructor_status: { $ifNull: ["$instructor_status", ""] },
+          current_profile: { $ifNull: ["$current_profile", ""] },
+          instructor_country: { $ifNull: ["$instructor_country", ""] },
+          instructor_state: { $ifNull: ["$instructor_state", ""] },
           createdAt: 1,
-
-          // derived fields
-          course_count: { $size: "$courses" },
-          total_rating: { $sum: "$reviews.review_rating" },
-          reviewed_by: { $size: "$reviews" },
-          total_student: { $size: "$purchases" },
-          work_experience: 1,
-          social_media: 1,
+          course_count: { $size: { $ifNull: ["$courses", []] } },
+          reviewed_by: { $size: { $ifNull: ["$reviews", []] } },
+          total_student: { $size: { $ifNull: ["$purchases", []] } },
+          total_rating: {
+            $sum: { $ifNull: ["$reviews.instructor_rating", 0] },
+          },
+          total_payment: {
+            $sum: {
+              $map: {
+                input: { $ifNull: ["$purchases", []] },
+                as: "purchase",
+                in: { $ifNull: ["$$purchase.course_amount", 0] },
+              },
+            },
+          },
         },
       },
     ]);
 
-    // .findOne(
-    //   { instructor_id: instructor_id },
-    //   {
-    //     _id: 0,
-    //     instructor_id: { $ifNull: ["$instructor_id", ""] },
-    //     instructor_first_name: { $ifNull: ["$instructor_first_name", ""] },
-    //     instructor_last_name: { $ifNull: ["$instructor_last_name", ""] },
-    //     instructor_email: { $ifNull: ["$instructor_email", ""] },
-    //     instructor_phone_no: { $ifNull: ["$instructor_phone_no", ""] },
-    //     instructor_avatar: { $ifNull: ["$instructor_avatar", ""] },
-    //     instructor_gender: { $ifNull: ["$instructor_gender", ""] },
-    //     avg_score: { $ifNull: ["$avg_score", 0] },
-    //     course_count: { $ifNull: ["$course_count", 0] },
-    //     certificate_earned: { $ifNull: ["$certificate_earned", 0] },
-    //     badge_count: { $ifNull: ["$badge_count", 0] },
-    //     createdAt: 1,
-    //     instructor_type: "instructor",
-    //     instructor_country:1,
-    //     instructor_state:1,
-    //   }
-    // )
-    // .lean();
-
-    const response =
-      getProfilePayload !== null
-        ? {
-            status: 200,
-            message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
-            data: getProfilePayload,
-          }
-        : {
-            status: 409,
-            message: CONSTANT.STATUS.SOMETHING_WENT_WRONG,
-            data: [],
-          };
+    const count = await instructor.countDocuments({
+      ...checkMatch,
+      ...timeCheck,
+    });
+    const response = getInstructorList.length
+      ? {
+          status: 200,
+          message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+          count: count,
+          data: getInstructorList,
+        }
+      : {
+          status: 409,
+          message: CONSTANT.STATUS.NOT_FOUND,
+          data: [],
+        };
     return response;
   } catch (error) {
     return {
@@ -223,6 +267,94 @@ const getInstructorProfile = async (instructor_id) => {
     };
   }
 };
+
+// const getInstructor = async (instructor_id, page, limit) => {
+//   try {
+//     const skip = (page - 1) * limit;
+//     let checkMatch = { instructor_id: instructor_id };
+
+//     const getProfilePayload = await instructor.aggregate([
+//       {
+//         $match: checkMatch,
+//       },
+//       {
+//         $lookup: {
+//           from: "reviews",
+//           localField: "instructor_id",
+//           foreignField: "instructor_id",
+//           as: "reviews",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "courses",
+//           localField: "instructor_id",
+//           foreignField: "instructor_id",
+//           as: "courses",
+//         },
+//       },
+//       {
+//         $lookup: {
+//           from: "purchases",
+//           let: { courseIds: "$courses.course_id" },
+//           pipeline: [
+//             {
+//               $match: {
+//                 $expr: {
+//                   $in: ["$course_id", "$$courseIds"],
+//                 },
+//               },
+//             },
+//           ],
+//           as: "purchases",
+//         },
+//       },
+//       {
+//         $project: {
+//           _id: 0,
+//           instructor_id: { $ifNull: ["$instructor_id", ""] },
+//           instructor_first_name: { $ifNull: ["$instructor_first_name", ""] },
+//           instructor_last_name: { $ifNull: ["$instructor_last_name", ""] },
+//           instructor_email: { $ifNull: ["$instructor_email", ""] },
+//           instructor_phone_no: { $ifNull: ["$instructor_phone_no", ""] },
+//           instructor_avatar: { $ifNull: ["$instructor_avatar", ""] },
+//           instructor_gender: { $ifNull: ["$instructor_gender", ""] },
+//           instructor_about: { $ifNull: ["$instructor_about", ""] },
+//           createdAt: 1,
+
+//           // derived fields
+//           course_count: { $size: "$courses" },
+//           total_rating: { $sum: "$reviews.review_rating" },
+//           reviewed_by: { $size: "$reviews" },
+//           total_student: { $size: "$purchases" },
+//           work_experience: 1,
+//           social_media: 1,
+//         },
+//       },
+//     ]);
+
+//     const response =
+//       getProfilePayload !== null
+//         ? {
+//             status: 200,
+//             message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+//             data: getProfilePayload,
+//           }
+//         : {
+//             status: 409,
+//             message: CONSTANT.STATUS.SOMETHING_WENT_WRONG,
+//             data: [],
+//           };
+//     return response;
+//   } catch (error) {
+//     return {
+//       status: 500,
+//       message: CONSTANT.SERVER.SERVER_INTERNAl_ERROR,
+//       error: error,
+//       data: null,
+//     };
+//   }
+// };
 
 const sendVerificationEmail = async (name, email, verificationToken) => {
   const verificationUrl = `${url}/verify-email?token=${verificationToken}`;
@@ -477,103 +609,11 @@ const getProfile = async (instructor_id) => {
       },
       {
         $addFields: {
-          //     course_count: {
-          //       $size: {
-          //         $filter: {
-          //           input: { $ifNull: ["$courses", []] },
-          //           as: "course",
-          //           cond: { $eq: ["$$course.course_status", "published"] },
-          //         },
-          //       },
-          //     },
-          top_selling_course: {
-            $let: {
-              vars: {
-                sortedCourses: {
-                  $slice: [
-                    {
-                      $sortArray: {
-                        input: {
-                          $filter: {
-                            input: { $ifNull: ["$courses", []] },
-                            as: "course",
-                            cond: {
-                              $eq: ["$$course.course_status", "published"],
-                            },
-                          },
-                        },
-                        sortBy: { student_enrolled: -1 },
-                      },
-                    },
-                    1,
-                  ],
-                },
-              },
-              in: { $arrayElemAt: ["$$sortedCourses", 0] },
-            },
-          },
+          course_count: { $size: { $ifNull: ["$courses", []] } },
         },
       },
-
-      {
-        $lookup: {
-          from: "categories",
-          localField: "top_selling_course.category_id",
-          foreignField: "category_id",
-          as: "category_info",
-        },
-      },
-      {
-        $lookup: {
-          from: "sub_categories",
-          localField: "top_selling_course.sub_category_id",
-          foreignField: "sub_category_id",
-          as: "sub_category_info",
-        },
-      },
-      {
-        $addFields: {
-          "top_selling_course.category_name": {
-            $arrayElemAt: ["$category_info.category_title", 0],
-          },
-          "top_selling_course.sub_category_name": {
-            $arrayElemAt: ["$sub_category_info.sub_category_title", 0],
-          },
-        },
-      },
-
       {
         $project: {
-          // _id: 0,
-          // instructor_id: { $ifNull: ["$instructor_id", ""] },
-          // instructor_first_name: { $ifNull: ["$instructor_first_name", ""] },
-          // instructor_last_name: { $ifNull: ["$instructor_last_name", ""] },
-          // instructor_email: { $ifNull: ["$instructor_email", ""] },
-          // instructor_phone_no: { $ifNull: ["$instructor_phone_no", ""] },
-          // instructor_avatar: { $ifNull: ["$instructor_avatar", ""] },
-          // instructor_gender: { $ifNull: ["$instructor_gender", ""] },
-          // instructor_country: { $ifNull: ["$instructor_country", ""] },
-          // instructor_state: { $ifNull: ["$instructor_state", ""] },
-          // social_media: { $ifNull: ["$social_media", {}] },
-          // instructor_about: 1,
-          // profile_progress: "50%",
-          // course_count: 1,
-          // createdAt: 1,
-          // instructor_type: "instructor",
-          // instructor_country: 1,
-          // instructor_state: 1,
-          // student_count: {
-          //   $arrayElemAt: ["$courses.student_enrolled", 0],
-          // },
-          // instructor_total_rating: "$total_rating",
-          // instructor_reviewed_by: "$reviewed_by",
-          // top_selling_course: {
-          //   course_id: "$top_selling_course.course_id",
-          //   course_title: "$top_selling_course.course_title",
-          //   student_enrolled: "$top_selling_course.student_enrolled",
-          //   course_thumbnail: "$top_selling_course.course_thumbnail",
-
-          // },
           _id: 0,
           instructor_id: { $ifNull: ["$instructor_id", ""] },
           instructor_first_name: { $ifNull: ["$instructor_first_name", ""] },
@@ -584,10 +624,8 @@ const getProfile = async (instructor_id) => {
           instructor_gender: { $ifNull: ["$instructor_gender", ""] },
           instructor_country: { $ifNull: ["$instructor_country", ""] },
           instructor_state: { $ifNull: ["$instructor_state", ""] },
-          social_media: { $ifNull: ["$social_media", {}] },
-          instructor_work_Experience: { $ifNull: ["$work_experience", {}] },
           instructor_about: { $ifNull: ["$instructor_about", ""] },
-          profile_progress: "50%",
+          instructor_current_profile: { $ifNull: ["$current_profile", ""] },
           course_count: { $ifNull: ["$course_count", 0] },
           createdAt: { $ifNull: ["$createdAt", null] },
           instructor_type: "instructor",
@@ -600,37 +638,6 @@ const getProfile = async (instructor_id) => {
           bank_name: { $ifNull: ["$bank_name", ""] },
           account_no: { $ifNull: ["$account_no", ""] },
           ifsc_code: { $ifNull: ["$ifsc_code", ""] },
-          top_selling_course: {
-            $ifNull: [
-              {
-                $cond: {
-                  if: { $eq: ["$top_selling_course", null] },
-                  then: null,
-                  else: {
-                    course_id: {
-                      $ifNull: ["$top_selling_course.course_id", ""],
-                    },
-                    course_title: {
-                      $ifNull: ["$top_selling_course.course_title", ""],
-                    },
-                    student_enrolled: {
-                      $ifNull: ["$top_selling_course.student_enrolled", 0],
-                    },
-                    course_thumbnail: {
-                      $ifNull: ["$top_selling_course.course_thumbnail", ""],
-                    },
-                    category_name: {
-                      $ifNull: ["$top_selling_course.category_name", ""],
-                    },
-                    sub_category_name: {
-                      $ifNull: ["$top_selling_course.sub_category_name", ""],
-                    },
-                  },
-                },
-              },
-              null,
-            ],
-          },
         },
       },
     ]);
@@ -640,7 +647,7 @@ const getProfile = async (instructor_id) => {
         ? {
             status: 200,
             message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
-            data: getProfilePayload[0],
+            data: getProfilePayload,
           }
         : {
             status: 409,
@@ -658,53 +665,20 @@ const getProfile = async (instructor_id) => {
   }
 };
 
-const updateProfile = async (
-  instructor_id,
-  first_name,
-  last_name,
-  phone_no,
-  avatar,
-  gender,
-  about,
-  country,
-  state,
-  work_experience,
-  current_profile,
-  social_media,
-  holder_name,
-  bank_name,
-  account_no,
-  ifsc_code
-) => {
+const updateStatus = async (instructor_id, status) => {
   try {
-    const updateProfilePayload = await instructor.findOneAndUpdate(
-      { instructor_id: instructor_id },
-      {
-        instructor_first_name: first_name,
-        instructor_last_name: last_name,
-        instructor_phone_no: phone_no,
-        instructor_avatar: avatar,
-        instructor_gender: gender,
-        instructor_about: about,
-        instructor_country: country,
-        instructor_state: state,
-        work_experience: work_experience,
-        current_profile: current_profile,
-        social_media: social_media,
-        holder_name: holder_name,
-        bank_name: bank_name,
-        account_no: account_no,
-        ifsc_code: ifsc_code,
-      },
+    const updateStatusPayload = await instructor.updateMany(
+      { instructor_id: { $in: instructor_id } },
+      { instructor_status: status },
       { new: true }
     );
 
     const response =
-      updateProfilePayload !== null
+      updateStatusPayload !== null
         ? {
             status: 202,
             message: CONSTANT.PAYLOAD.RECORD_UPDATED_SUCCESSFULLY,
-            data: updateProfilePayload,
+            data: updateStatusPayload,
           }
         : {
             status: 409,
@@ -1043,48 +1017,168 @@ const studentPurchases = async (instructor_id, page, limit) => {
   }
 };
 
-const getRevenue = async (instructor_id, page, limit, year) => {
+// const getRevenue = async (instructor_id, page, limit, year) => {
+//   try {
+//     const skip = (page - 1) * limit;
+//     let date = new Date();
+//     let currentYear = date.getFullYear();
+
+//     const getRevenuePayload = await revenueModel.aggregate([
+//       {
+//         $match: { instructor_id: instructor_id, revenue_year: Number(year) },
+//       },
+//       {
+//         $lookup: {
+//           from: "courses",
+//           localField: "instructor_id",
+//           foreignField: "instructor_id",
+//           as: "courses",
+//         },
+//       },
+//       {
+//         $addFields: {
+//           course_count: { $size: "$courses" },
+//           fees_total: {
+//             $add: [
+//               { $ifNull: [{ $toDouble: "$platform_fee" }, 0] },
+//               { $ifNull: [{ $toDouble: "$revenue_taxes" }, 0] },
+//             ],
+//           },
+//           net_earning: {
+//             $subtract: [
+//               "$total_amount",
+//               {
+//                 $add: [
+//                   { $ifNull: [{ $toDouble: "$platform_fee" }, 0] },
+//                   { $ifNull: [{ $toDouble: "$revenue_taxes" }, 0] },
+//                 ],
+//               },
+//             ],
+//           },
+//         },
+//       },
+//       // { $skip: Number(skip) },
+//       // { $limit: Number(limit) },
+//       {
+//         $project: {
+//           _id: 0,
+//           revenue_id: 1,
+//           revenue_year: 1,
+//           revenue_month: 1,
+//           payment_method: 1,
+//           revenue_status: 1,
+//           total_sales: 2,
+//           total_amount: 1,
+//           platform_fee: 1,
+//           revenue_taxes: 1,
+//           course_count: 1,
+//           net_earning: 1,
+//         },
+//       },
+//     ]);
+
+//     const response =
+//       getRevenuePayload.length
+//         ? {
+//             status: 200,
+//             message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+//             data: getRevenuePayload,
+//           }
+//         : {
+//             status: 409,
+//             message: CONSTANT.STATUS.NOT_FOUND,
+//             data: [],
+//           };
+
+//     return response;
+//   } catch (error) {
+//     return { status: 422, message: error.message };
+//   }
+// };
+
+const getRevenue = async (instructor_id, page = 1, limit = 10, year) => {
   try {
     const skip = (page - 1) * limit;
-    let date = new Date();
-    let currentYear = date.getFullYear();
+    const currentYear = year ? Number(year) : new Date().getFullYear();
 
-    const getRevenuePayload = await revenueModel.aggregate([
+    const data = await revenueModel.aggregate([
+      // ✅ STEP 1: Match base data
       {
-        $match: { instructor_id: instructor_id, revenue_year: Number(year) },
+        $addFields: {
+          revenue_year: { $year: "$createdAt" },
+        },
       },
+      {
+        $match: {
+          instructor_id: instructor_id,
+          revenue_year: Number(year),
+        },
+      },
+
+      // ✅ STEP 2: Lookup monthly course count
       {
         $lookup: {
           from: "courses",
-          localField: "instructor_id",
-          foreignField: "instructor_id",
-          as: "courses",
+          let: {
+            instructorId: "$instructor_id",
+            month: "$revenue_month",
+            year: "$revenue_year",
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$instructor_id", "$$instructorId"] },
+                    { $eq: [{ $month: "$createdAt" }, "$$month"] },
+                    { $eq: [{ $year: "$createdAt" }, "$$year"] },
+                  ],
+                },
+              },
+            },
+            { $count: "count" },
+          ],
+          as: "courseData",
         },
       },
+
+      // ✅ STEP 3: Clean + compute fields
       {
         $addFields: {
-          course_count: { $size: "$courses" },
-          fees_total: {
-            $add: [
-              { $ifNull: [{ $toDouble: "$platform_fee" }, 0] },
-              { $ifNull: [{ $toDouble: "$revenue_taxes" }, 0] },
-            ],
+          course_count: {
+            $ifNull: [{ $arrayElemAt: ["$courseData.count", 0] }, 0],
           },
+
+          total_amount: { $ifNull: [{ $toDouble: "$total_amount" }, 0] },
+          platform_fee: { $ifNull: [{ $toDouble: "$platform_fee" }, 0] },
+          revenue_taxes: { $ifNull: [{ $toDouble: "$revenue_taxes" }, 0] },
+
+          fees_total: {
+            $add: ["$platform_fee", "$revenue_taxes"],
+          },
+
           net_earning: {
             $subtract: [
               "$total_amount",
-              {
-                $add: [
-                  { $ifNull: [{ $toDouble: "$platform_fee" }, 0] },
-                  { $ifNull: [{ $toDouble: "$revenue_taxes" }, 0] },
-                ],
-              },
+              { $add: ["$platform_fee", "$revenue_taxes"] },
             ],
           },
         },
       },
-      { $skip: Number(skip) },
-      { $limit: Number(limit) },
+
+      // ✅ STEP 4: Remove empty data
+      // {
+      //   $match: {
+      //     total_amount: { $gt: 0 },
+      //   },
+      // },
+
+      // ✅ STEP 5: Sort + paginate
+      { $sort: { revenue_month: 1 } },
+      { $skip: skip },
+      { $limit: limit },
+
+      // ✅ STEP 6: Final output
       {
         $project: {
           _id: 0,
@@ -1093,32 +1187,36 @@ const getRevenue = async (instructor_id, page, limit, year) => {
           revenue_month: 1,
           payment_method: 1,
           revenue_status: 1,
-          total_sales: 2,
+          total_sales: 1,
           total_amount: 1,
           platform_fee: 1,
           revenue_taxes: 1,
+          fees_total: 1,
           course_count: 1,
           net_earning: 1,
         },
       },
     ]);
 
-    const response =
-      getRevenuePayload !== null
-        ? {
-            status: 200,
-            message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
-            data: getRevenuePayload,
-          }
-        : {
-            status: 409,
-            message: CONSTANT.STATUS.NOT_FOUND,
-            data: [],
-          };
+    console.log("....", data);
 
-    return response;
+    return data.length
+      ? {
+          status: 200,
+          message: "Revenue fetched successfully",
+          data: data,
+        }
+      : {
+          status: 404,
+          message: "No revenue found",
+          data: [],
+        };
   } catch (error) {
-    return { status: 422, message: error.message };
+    return {
+      status: 422,
+      message: error.message,
+      data: [],
+    };
   }
 };
 
@@ -1196,7 +1294,8 @@ const getActivity = async (
     return { status: 422, message: error.message };
   }
 };
-const getMonthlyStats = async (instructor_id, month, year, course_id) => {
+
+const getMonthlyStats = async (monthFilter, yearFilter) => {
   try {
     const MONTH_NAMES = [
       "january",
@@ -1213,112 +1312,106 @@ const getMonthlyStats = async (instructor_id, month, year, course_id) => {
       "december",
     ];
 
-    const currentYear = year ? Number(year) : new Date().getFullYear();
+    const currentYear = yearFilter
+      ? Number(yearFilter)
+      : new Date().getFullYear();
 
-    let monthFilter = {};
-    if (month) {
-      const monthIndex = MONTH_NAMES.indexOf(month.toLowerCase());
+    let matchFilter = {
+      createdAt: {
+        $gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+        $lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+      },
+    };
+
+    let monthIndex = null;
+
+    if (monthFilter) {
+      monthIndex = MONTH_NAMES.indexOf(monthFilter.toLowerCase());
+
       if (monthIndex === -1) {
         return { status: 409, message: "Invalid month name", data: [] };
       }
-      monthFilter = {
-        $expr: {
-          $and: [
-            { $eq: [{ $month: "$createdAt" }, monthIndex + 1] },
-            { $eq: [{ $year: "$createdAt" }, currentYear] },
+
+      const start = new Date(currentYear, monthIndex, 1);
+      const end = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59, 999); // ✅ FIX
+
+      matchFilter.createdAt = { $gte: start, $lte: end };
+    }
+
+    const result = await instructor.aggregate([
+      {
+        $facet: {
+          // ✅ ALL MONTH DATA (NO month filter)
+          monthly: [
+            {
+              $match: {
+                createdAt: {
+                  $gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+                  $lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+                },
+              },
+            },
+            {
+              $group: {
+                _id: { $month: "$createdAt" },
+                total_instructor: { $sum: 1 },
+              },
+            },
+          ],
+
+          // ✅ FILTERED DATA (month/year)
+          filtered: [
+            { $match: matchFilter },
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+              },
+            },
+          ],
+
+          active: [
+            { $match: { instructor_status: "active" } },
+            { $count: "count" },
+          ],
+
+          suspended: [
+            { $match: { instructor_status: "suspended" } },
+            { $count: "count" },
           ],
         },
-      };
-    } else {
-      monthFilter = {
-        $expr: { $eq: [{ $year: "$createdAt" }, currentYear] },
-      };
-    }
-
-    const filter = { instructor_id: instructor_id };
-    if (course_id) {
-      filter.course_id = course_id;
-    }
-    const instructorCourses = await courseModel
-      .find(filter, { _id: 0, course_id: 1, course_price: 1 })
-      .lean();
-
-    const courseIds = instructorCourses.map((c) => c.course_id);
-
-    if (courseIds.length === 0) {
-      return { status: 409, message: "No courses found", data: [] };
-    }
-
-    const learnerStats = await purchase.aggregate([
-      {
-        $match: {
-          course_id: { $in: courseIds },
-          ...monthFilter,
-        },
       },
-      {
-        $group: {
-          _id: { $month: "$createdAt" },
-          total_learners: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
     ]);
 
-    const revenueStats = await revenueModel.aggregate([
-      {
-        $match: {
-          // course_id: { $in: courseIds },
-          instructor_id: instructor_id,
-          ...monthFilter,
-        },
-      },
-      {
-        $group: {
-          _id: { $month: "$createdAt" },
-          total_revenue: { $sum: "$total_amount" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
+    // DEFAULT MONTH STRUCTURE
     const monthlyData = {};
-
-    MONTH_NAMES.forEach((m, index) => {
-      monthlyData[m] = {
-        total_learners: 0,
-        total_revenue: 0,
-      };
+    MONTH_NAMES.forEach((m) => {
+      monthlyData[m] = { total_instructor: 0 };
     });
 
-    learnerStats.forEach((item) => {
+    // MAP DATA
+    result[0].monthly.forEach((item) => {
       const monthName = MONTH_NAMES[item._id - 1];
-      monthlyData[monthName].total_learners = item.total_learners;
+      monthlyData[monthName].total_instructor = item.total_instructor;
     });
 
-    revenueStats.forEach((item) => {
-      const monthName = MONTH_NAMES[item._id - 1];
-      monthlyData[monthName].total_revenue = item.total_revenue;
-    });
+    // ✅ FIXED HERE
+    const finalData = monthlyData; // ✅ ALWAYS ALL MONTHS
 
-    const finalData = month
-      ? { [month.toLowerCase()]: monthlyData[month.toLowerCase()] }
-      : monthlyData;
-
-    const courseCount = await courseModel.countDocuments({
-      instructor_id: instructor_id,
-    });
+    const totalInstructor = await instructorModel.countDocuments();
 
     return {
       status: 200,
-      message: "Monthly stats fetched successfully",
+      message: "Instructor monthly stats fetched successfully",
       year: currentYear,
-      courseCount: courseCount,
+      totalInstructor,
+      total_active_instructor: result[0].active[0]?.count || 0,
+      total_suspended_instructor: result[0].suspended[0]?.count || 0,
       data: finalData,
     };
   } catch (error) {
     return {
-      status: 412,
+      status: 500,
       message: error.message,
       data: [],
     };
@@ -1327,12 +1420,12 @@ const getMonthlyStats = async (instructor_id, month, year, course_id) => {
 
 module.exports = {
   addInstructor,
-  getInstructorProfile,
+  getInstructor,
   signUp,
   login,
   getInstructorByEmail,
   getProfile,
-  updateProfile,
+  updateStatus,
   forgetPassword,
   verifyOtp,
   changePassword,

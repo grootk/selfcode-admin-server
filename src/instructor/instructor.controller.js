@@ -258,10 +258,27 @@ const login = async (req, res, next) => {
     );
   }
 };
-const getProfile = async (req, res, next) => {
+
+const getInstructor = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
-    const data = await instructorService.getProfile(instructor_id);
+    const {
+      instructor_id,
+      page,
+      limit,
+      yearFilter,
+      monthFilter,
+      status,
+      sort_by,
+    } = req.query;
+    const data = await instructorService.getInstructor(
+      instructor_id,
+      page,
+      limit,
+      yearFilter,
+      monthFilter,
+      status,
+      sort_by
+    );
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -276,44 +293,10 @@ const getProfile = async (req, res, next) => {
   }
 };
 
-const updateProfile = async (req, res, next) => {
+const updateStatus = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
-    const {
-      first_name,
-      last_name,
-      phone_no,
-      avatar,
-      gender,
-      about,
-      country,
-      state,
-      work_experience,
-      current_profile,
-      social_media,
-      holder_name,
-      bank_name,
-      account_no,
-      ifsc_code,
-    } = req.body;
-    const data = await instructorService.updateProfile(
-      instructor_id,
-      first_name,
-      last_name,
-      phone_no,
-      avatar,
-      gender,
-      about,
-      country,
-      state,
-      work_experience,
-      current_profile,
-      social_media,
-      holder_name,
-      bank_name,
-      account_no,
-      ifsc_code
-    );
+    const { instructor_id, status } = req.body;
+    const data = await instructorService.updateStatus(instructor_id, status);
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -385,8 +368,7 @@ const changePassword = async (req, res, next) => {
 
 const getRevenue = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
-    const { page, limit, year } = req.query;
+    const { page, limit, year, instructor_id } = req.query;
     const data = await instructorService.getRevenue(
       instructor_id,
       page,
@@ -434,14 +416,8 @@ const getActivity = async (req, res, next) => {
 
 const getMonthlyStats = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
-    const { month, year, course_id } = req.query;
-    const data = await instructorService.getMonthlyStats(
-      instructor_id,
-      month,
-      year,
-      course_id
-    );
+    const { monthFilter, yearFilter } = req.query;
+    const data = await instructorService.getMonthlyStats(monthFilter, yearFilter);
     return successHandler(data, req, res, next);
   } catch (error) {
     return errorHandler(
@@ -459,8 +435,8 @@ const getMonthlyStats = async (req, res, next) => {
 module.exports = {
   signUp,
   login,
-  getProfile,
-  updateProfile,
+  getInstructor,
+  updateStatus,
   forgetPassword,
   verifyOtp,
   changePassword,

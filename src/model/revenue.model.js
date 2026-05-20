@@ -24,7 +24,7 @@ const revenueModel = new mongoose.Schema({
     },
     payment_method: {
         type: String,
-        required: true
+        required: false
     },
     revenue_taxes: {
         type: Number,

@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const { logger } = require("../../packages/manager");
 const instructorModel = require("../model/instructor.model");
+const revenueModel = require("../model/revenue.model");
 
 const userCron = async () => {
 cron.schedule("0 0 1 * *", async () => {
@@ -21,7 +22,7 @@ cron.schedule("0 0 1 * *", async () => {
 
   
     const revenueDocs = instructors.map((inst) => ({
-      revenue_id: generateRevenueId(),
+      revenue_id: `rev_${inst.instructor_id}_${month}_${year}`,
       instructor_id: inst.instructor_id,
       admin_id: "",
       transaction_id: "",
@@ -43,7 +44,7 @@ cron.schedule("0 0 1 * *", async () => {
     logger.info("Revenue created for all instructors");
 
   } catch (error) {
-    logger.error("Cron error:", error.message);
+    logger.error("Cron error:", error);
   }
 }, {
   timezone: "Asia/Kolkata" // 🇮🇳 important for correct midnight
