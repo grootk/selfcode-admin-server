@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const badgesModel = new mongoose.Schema(
   {
-    badges_id: {
+    badge_id: {
       type: String,
       required: true,
       unique: true,
@@ -15,8 +15,8 @@ const badgesModel = new mongoose.Schema(
       type: String,
       required: false,
     },
-    badge_score: {
-      type: Number,
+    badge_category: {
+      type: String,
       required: true,
     },
   },

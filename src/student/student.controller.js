@@ -166,6 +166,7 @@ const login = async (req, res, next) => {
     );
   }
 };
+
 const getStudentList = async (req, res, next) => {
   try {
     const { page, limit, monthFilter, yearFilter, status, search } = req.query;
@@ -191,18 +192,10 @@ const getStudentList = async (req, res, next) => {
   }
 };
 
-const updateProfile = async (req, res, next) => {
+const updateStatus = async (req, res, next) => {
   try {
-    const student_id = req.data.sub;
-    const { first_name, last_name, phone_no, avatar, gender } = req.body;
-    const data = await studentService.updateProfile(
-      student_id,
-      first_name,
-      last_name,
-      phone_no,
-      avatar,
-      gender
-    );
+    const { student_id, status } = req.body;
+    const data = await studentService.updateStatus(student_id, status);
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -223,6 +216,27 @@ const getCourse = async (req, res, next) => {
     const data = await studentService.getCourse(student_id, page, limit);
     return successHandler(data, req, res, next);
   } catch (err) {
+    return errorHandler(
+      {
+        status: 412,
+        message: err.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
+const addNewCourse = async (req, res, next) => {
+  try {
+    const { course_id, student_id } = req.body;
+    const addNewCoursePayload = await studentService.addNewCourse(
+      course_id,
+      student_id
+    );
+    return successHandler(addNewCoursePayload, req, res, next);
+  } catch (error) {
     return errorHandler(
       {
         status: 412,
@@ -349,8 +363,9 @@ module.exports = {
   signUp,
   login,
   getStudentList,
-  updateProfile,
+  updateStatus,
   getCourse,
+  addNewCourse,
   forgetPassword,
   verifyOtp,
   changePassword,

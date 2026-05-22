@@ -62,7 +62,7 @@ const instructorSchema = new mongoose.Schema(
     },
     instructor_status: {
       type: String,
-      enum: ["active", "in_active", "suspendend"],
+      enum: ["active", "in_active", "suspended"],
       required: false,
     },
     instructor_role: {

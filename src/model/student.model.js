@@ -90,7 +90,7 @@ const studentSchema = new mongoose.Schema(
     },
     student_status: {
       type: String,
-      enum: ["active", "in_active", "suspendend"],
+      enum: ["active", "in_active", "suspended"],
       require: false,
     },
     is_premium: {

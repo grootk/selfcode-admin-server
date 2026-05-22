@@ -245,11 +245,26 @@ const getInstructor = async (
       ...checkMatch,
       ...timeCheck,
     });
+    const suspendedCount = await instructor.countDocuments({
+      instructor_status: CONSTANT.STATUS.SUSPENDED,
+      ...timeCheck,
+    });
+    const activeCount = await instructor.countDocuments({
+      instructor_status: CONSTANT.STATUS.ACTIVE,
+      ...timeCheck,
+    });
+    const inActiveCount = await instructor.countDocuments({
+      instructor_status: CONSTANT.STATUS.INACTIVE,
+      ...timeCheck,
+    });
     const response = getInstructorList.length
       ? {
           status: 200,
           message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
           count: count,
+          suspendedCount: suspendedCount,
+          activeCount: activeCount,
+          inActiveCount: inActiveCount,
           data: getInstructorList,
         }
       : {

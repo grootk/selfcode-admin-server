@@ -23,6 +23,14 @@ const certificateModel = new mongoose.Schema(
       type: String,
       required: false,
     },
+    quiz_badge_id: {
+      type: String,
+      required: false,
+    },
+    course_badge_id: {
+      type: String,
+      required: false,
+    },
     issued_date: {
       type: Date,
       required: true,

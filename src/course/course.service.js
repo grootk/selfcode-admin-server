@@ -212,10 +212,24 @@ const getCourse = async (
         },
       },
       {
+        $lookup: {
+          from: "instructors",
+          localField: "instructor_id",
+          foreignField: "instructor_id",
+          as: "instructor",
+        },
+      },
+      {
         $addFields: {
           category_name: { $arrayElemAt: ["$category.category_title", 0] },
           sub_category_name: {
             $arrayElemAt: ["$sub_category.sub_category_title", 0],
+          },
+          instructor_first_name: {
+            $arrayElemAt: ["$instructor.instructor_first_name", 0],
+          },
+          instructor_last_name: {
+            $arrayElemAt: ["$instructor.instructor_last_name", 0],
           },
           total_enrolled: { $size: "$completions" },
           chapter_count: { $size: "$chapters" },
@@ -343,6 +357,8 @@ const getCourse = async (
         $project: {
           _id: 0,
           instructor_id: { $ifNull: ["$instructor_id", ""] },
+          instructor_first_name: 1,
+          instructor_last_name: 1,
           course_id: { $ifNull: ["$course_id", ""] },
           course_title: { $ifNull: ["$course_title", ""] },
           course_description: { $ifNull: ["$course_description", ""] },
@@ -351,7 +367,7 @@ const getCourse = async (
           category_name: { $ifNull: ["$category_name", ""] },
           course_status: { $ifNull: ["$course_status", ""] },
           course_review_date: { $ifNull: ["$course_review_date", null] },
-          course_publish_date: { $ifNull: ["$course_publish_date", null] },
+          course_published_date: { $ifNull: ["$course_published_date", null] },
           sub_category_name: { $ifNull: ["$sub_category_name", ""] },
           reviewed_by: { $ifNull: ["$reviewed_by", null] },
           createdAt: { $ifNull: ["$createdAt", null] },

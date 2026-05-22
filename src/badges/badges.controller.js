@@ -22,8 +22,8 @@ const getBadges = async (req, res, next) => {
 
 const addBadges = async (req, res, next) => {
   try {
-    const { type, image, score } = req.body;
-    const data = await badgesService.addBadges(type, image, score);
+    const { type, image, category } = req.body;
+    const data = await badgesService.addBadges(type, image, category);
     return successHandler(data, req, res, next);
   } catch (error) {
     return errorHandler(

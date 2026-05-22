@@ -7,6 +7,8 @@ const student = require("../model/student.model");
 const purchase = require("../model/purchase.model");
 const course = require("../model/course.model");
 const courseCompletionModel = require("../model/courseCompletion.model");
+const chapter = require("../model/chapter.model");
+const topic= require("../model/topic.model");
 const { getMonthMap } = require("../../packages/handlers");
 const { pipeline } = require("stream");
 
@@ -469,12 +471,50 @@ const getStudentList = async (
       {
         $lookup: {
           from: "submissions",
-          localField: "student_id",
-          foreignField: "student_id",
+          let: { sid: "$student_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$student_id", "$$sid"] },
+              },
+            },
+            { $sort: { createdAt: -1 } },
+            // ✅ pick latest attempt per quiz
+            {
+              $group: {
+                _id: "$quiz_id",
+                doc: { $first: "$$ROOT" },
+              },
+            },
+            { $replaceRoot: { newRoot: "$doc" } },
+          ],
           as: "submission",
         },
       },
-
+      {
+        $lookup: {
+          from: "course_completions",
+          let: { sid: "$student_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$student_id", "$$sid"] },
+                    { $eq: ["$course_status", "completed"] },
+                  ],
+                },
+              },
+            },
+            {
+              $group: {
+                _id: "$course_id", // ✅ unique courses only
+              },
+            },
+          ],
+          as: "completed_courses",
+        },
+      },
       {
         $addFields: {
           course_count: { $size: "$purchases" },
@@ -482,49 +522,121 @@ const getStudentList = async (
           completed_chapters_count: {
             $size: { $ifNull: ["$course_completed", []] },
           },
-
           avg_score: {
             $cond: [
               { $eq: [{ $size: "$submission" }, 0] },
               0,
               {
-                $divide: [
-                  { $sum: "$submission.total_score" },
-                  { $size: "$submission" },
+                $round: [
+                  {
+                    $multiply: [
+                      {
+                        $divide: [
+                          { $sum: "$submission.total_score" },
+                          { $sum: "$submission.quiz_total_points" },
+                        ],
+                      },
+                      10,
+                    ],
+                  },
+                  2,
                 ],
               },
             ],
           },
-
           avg_total_marks: {
             $cond: [
               { $eq: [{ $size: "$submission" }, 0] },
               0,
               {
-                $divide: [
-                  { $sum: "$submission.quiz_total_points" },
-                  { $size: "$submission" },
+                $round: [
+                  {
+                    $divide: [
+                      { $sum: "$submission.quiz_total_points" },
+                      { $size: "$submission" },
+                    ],
+                  },
+                  2,
                 ],
               },
             ],
           },
         },
       },
-
+      {
+        $addFields: {
+          total_courses: { $size: { $ifNull: ["$purchases", []] } },
+          completed_courses_count: {
+            $size: { $ifNull: ["$completed_courses", []] },
+          },
+        },
+      },
       {
         $addFields: {
           course_progress: {
             $cond: {
-              if: { $eq: ["$course_count", 0] },
+              if: { $eq: ["$total_courses", 0] },
               then: 0,
               else: {
-                $divide: ["$completed_chapters_count", "$course_count"],
+                $round: [
+                  {
+                    $multiply: [
+                      {
+                        $divide: ["$completed_courses_count", "$total_courses"],
+                      },
+                      100,
+                    ],
+                  },
+                  2,
+                ],
               },
             },
           },
         },
       },
-
+      {
+        $addFields: {
+          basket_size: {
+            $cond: [
+              { $gt: [{ $size: "$purchases" }, 0] },
+              {
+                $round: [
+                  {
+                    $divide: [
+                      {
+                        $sum: {
+                          $map: {
+                            input: {
+                              $filter: {
+                                input: "$purchases",
+                                as: "p",
+                                cond: { $ne: ["$$p.if_free", true] },
+                              },
+                            },
+                            as: "p",
+                            in: "$$p.course_amount",
+                          },
+                        },
+                      },
+                      {
+                        $size: {
+                          $filter: {
+                            input: "$purchases",
+                            as: "p",
+                            cond: { $ne: ["$$p.if_free", true] },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                  2,
+                ],
+              },
+              0,
+            ],
+          },
+        },
+      },
       {
         $project: {
           _id: 0,
@@ -536,9 +648,8 @@ const getStudentList = async (
           student_avatar: { $ifNull: ["$student_avatar", ""] },
           student_gender: { $ifNull: ["$student_gender", ""] },
           student_status: { $ifNull: ["$student_status", ""] },
+          basket_size: 1,
           course_count: 1,
-          certificate_earned: { $ifNull: ["$certificate_earned", 0] },
-          badge_count: { $ifNull: ["$badge_count", 0] },
           createdAt: 1,
           student_type: "student",
           student_country: 1,
@@ -555,11 +666,27 @@ const getStudentList = async (
 
     const total = await student.countDocuments({ ...matchStage, ...timeCheck });
 
+    const suspendedCount = await student.countDocuments({
+      student_status: CONSTANT.STATUS.SUSPENDED,
+      ...timeCheck,
+    });
+    const activeCount = await student.countDocuments({
+      student_status: CONSTANT.STATUS.ACTIVE,
+      ...timeCheck,
+    });
+    const inActiveCount = await student.countDocuments({
+      student_status: CONSTANT.STATUS.INACTIVE,
+      ...timeCheck,
+    });
+
     return data.length
       ? {
           status: 200,
           message: "Student list fetched successfully",
           count: total,
+          suspendedCount: suspendedCount,
+          activeCount: activeCount,
+          inActiveCount: inActiveCount,
           data: data,
         }
       : {
@@ -576,34 +703,22 @@ const getStudentList = async (
   }
 };
 
-const updateProfile = async (
-  student_id,
-  first_name,
-  last_name,
-  phone_no,
-  avatar,
-  gender
-) => {
+const updateStatus = async (student_id, status) => {
   try {
-    // const { name, phone_no, avatar, gender } = payload;
-    const updateProfilePayload = await student.findOneAndUpdate(
-      { student_id: student_id },
+    const updateStatusPayload = await student.updateMany(
+      { student_id: { $in: student_id } },
       {
-        student_first_name: first_name,
-        student_last_name: last_name,
-        student_phone_no: phone_no,
-        student_avatar: avatar,
-        student_gender: gender,
+        student_status: status,
       },
       { new: true }
     );
 
     const response =
-      updateProfilePayload !== null
+      updateStatusPayload !== null
         ? {
             status: 200,
             message: CONSTANT.PAYLOAD.RECORD_UPDATED_SUCCESSFULLY,
-            data: updateProfilePayload,
+            data: updateStatusPayload,
           }
         : {
             status: 409,
@@ -630,8 +745,8 @@ const getCourse = async (
   sort_by,
   monthFilter,
   yearFilter,
-  type, 
-  category_id, 
+  type,
+  category_id,
   instructor_id
 ) => {
   try {
@@ -701,113 +816,6 @@ const getCourse = async (
           is_favourite: { $gt: [{ $size: "$fav" }, 0] },
         },
       },
-
-      // ── is_completed flag ────────────────────────────────────────
-      {
-        $lookup: {
-          from: "course_completions",
-          let: { cid: "$course_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$course_id", "$$cid"] },
-                    { $eq: ["$student_id", student_id] },
-                    { $eq: ["$chapter_id", null] },
-                    { $eq: ["$topic_id", null] },
-                  ],
-                },
-              },
-            },
-            { $limit: 1 },
-          ],
-          as: "completion",
-        },
-      },
-      {
-        $addFields: {
-          is_completed: { $gt: [{ $size: "$completion" }, 0] },
-        },
-      },
-      {
-        $lookup: {
-          from: "course_completions",
-          let: { cid: "$course_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$course_id", "$$cid"] },
-                    { $eq: ["$student_id", student_id] },
-                    { $eq: ["$chapter_status", "completed"] },
-                  ],
-                },
-              },
-            },
-          ],
-          as: "chapter_completed",
-        },
-      },
-      {
-        $addFields: {
-          is_completed: { $gt: [{ $size: "$completion" }, 0] },
-        },
-      },
-      {
-        $lookup: {
-          from: "course_completions",
-          let: { cid: "$course_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$course_id", "$$cid"] },
-                    { $eq: ["$student_id", student_id] },
-                    { $ne: ["$current_topic_id", null] },
-                    { $ne: ["$course_status", null] },
-                  ],
-                },
-              },
-            },
-          ],
-          as: "current_topic",
-        },
-      },
-      ...(type === "favourite" ? [{ $match: { is_favourite: true } }] : []),
-
-      ...(type === "completed" ? [{ $match: { is_completed: true } }] : []),
-
-      ...(type === "inprogress"
-        ? [
-            {
-              $lookup: {
-                from: "course_completions",
-                let: { cid: "$course_id" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: {
-                        $and: [
-                          { $eq: ["$course_id", "$$cid"] },
-                          { $eq: ["$student_id", student_id] },
-                          { $eq: ["$course_status", null] }, // or "inprogress" ?
-                        ],
-                      },
-                    },
-                  },
-                  { $limit: 1 },
-                ],
-                as: "inprog",
-              },
-            },
-            { $match: { "inprog.0": { $exists: true } } },
-          ]
-        : []),
-
-      ...(type === "new" ? [] : []),
       {
         $lookup: {
           from: "categories",
@@ -853,17 +861,21 @@ const getCourse = async (
           from: "quizzes",
           let: {
             quizIds: {
-              $filter: {
-                input: {
+              $setUnion: [
+                {
                   $map: {
-                    input: { $ifNull: ["$topics", []] },
+                    input: {
+                      $filter: {
+                        input: { $ifNull: ["$topics", []] },
+                        as: "t",
+                        cond: { $ne: ["$$t.quiz_id", null] },
+                      },
+                    },
                     as: "t",
                     in: "$$t.quiz_id",
                   },
                 },
-                as: "q",
-                cond: { $ne: ["$$q", null] },
-              },
+              ],
             },
           },
           pipeline: [
@@ -874,143 +886,51 @@ const getCourse = async (
                 },
               },
             },
+            {
+              $group: {
+                _id: "$quiz_id",
+              },
+            },
           ],
           as: "quizzes",
         },
       },
       {
         $addFields: {
+          quiz_count: {
+            $size: {
+              $filter: {
+                input: "$topics",
+                as: "t",
+                cond: {
+                  $and: [
+                    { $eq: ["$$t.topic_type", "quiz"] },
+                    { $ne: ["$$t.quiz_id", ""] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
           course_duration: { $sum: "$chapters.chapter_duration" },
-          instructor_name: { $arrayElemAt: ["$instructor.instructor_name", 0] },
+          instructor_first_name: {
+            $arrayElemAt: ["$instructor.instructor_first_name", 0],
+          },
+          instructor_last_name: {
+            $arrayElemAt: ["$instructor.instructor_last_name", 0],
+          },
           category_title: { $arrayElemAt: ["$category.category_title", 0] },
           sub_category_title: {
             $arrayElemAt: ["$subCategory.sub_category_title", 0],
           },
-          quiz_count: { $size: "$quizzes" },
-          chapter_completed: { $size: "$chapter_completed" },
-          completed_chapters_count: {
-            $size: { $ifNull: ["$chapter_completed", []] },
-          },
+
           total_chapters: { $size: { $ifNull: ["$chapters", []] } },
         },
       },
-      {
-        $addFields: {
-          course_progress: {
-            $cond: {
-              if: {
-                $or: [
-                  { $eq: ["$total_chapters", 0] },
-                  { $eq: ["$completed_chapters_count", 0] },
-                ],
-              },
-              then: null,
-              else: {
-                $divide: ["$completed_chapters_count", "$total_chapters"],
-              },
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          next_order: {
-            $add: ["$completed_chapters_count", 1],
-          },
-          current_order: "$completed_chapters_count",
-        },
-      },
-      {
-        $addFields: {
-          next_chapter: {
-            $arrayElemAt: [
-              {
-                $filter: {
-                  input: "$chapters",
-                  as: "ch",
-                  cond: { $eq: ["$$ch.chapter_rank", "$next_order"] },
-                },
-              },
-              0,
-            ],
-          },
-          current_chapter: {
-            $arrayElemAt: [
-              {
-                $filter: {
-                  input: "$chapters",
-                  as: "ch",
-                  cond: { $eq: ["$$ch.chapter_rank", "$current_order"] },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
-
-      {
-        $addFields: {
-          next_chapter: {
-            $cond: {
-              if: { $gt: ["$next_order", "$total_chapters"] },
-              then: null,
-              else: "$next_chapter",
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          current_topic_doc: { $arrayElemAt: ["$current_topic", 0] },
-        },
-      },
-      {
-        $addFields: {
-          // find current topic's rank from topics array
-          current_topic_rank: {
-            $arrayElemAt: [
-              {
-                $filter: {
-                  input: "$topics",
-                  as: "t",
-                  cond: {
-                    $eq: [
-                      "$$t.topic_id",
-                      "$current_topic_doc.current_topic_id",
-                    ],
-                  },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
-      {
-        $addFields: {
-          // find next topic where rank = current rank + 1
-          next_topic_doc: {
-            $arrayElemAt: [
-              {
-                $filter: {
-                  input: "$topics",
-                  as: "t",
-                  cond: {
-                    $eq: [
-                      "$$t.topic_rank",
-                      { $add: ["$current_topic_rank.topic_rank", 1] },
-                    ],
-                  },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
       { $match: { ...typeMatch } },
-
       { $skip: Number(skip) },
       { $limit: Number(limit) },
 
@@ -1021,7 +941,8 @@ const getCourse = async (
           category_id: 1,
           sub_category_id: 1,
           instructor_id: 1,
-          instructor_name: 1,
+          instructor_first_name: 1,
+          instructor_last_name: 1,
           category_title: 1,
           sub_category_title: 1,
           course_title: 1,
@@ -1030,9 +951,7 @@ const getCourse = async (
           course_price: { $ifNull: ["$course_price", 0] },
           course_discount: { $ifNull: ["$course_discount", 0] },
           course_tags: { $ifNull: ["$course_tags", []] },
-          course_language: 1,
           course_overview: 1,
-          course_level: 1,
           student_enrolled: { $ifNull: ["$student_enrolled", 0] },
           course_total_rating: { $ifNull: ["$course_total_rating", 0] },
           course_duration: 1,
@@ -1040,28 +959,11 @@ const getCourse = async (
           quiz_count: 1,
           reviewed_by: { $ifNull: ["$reviewed_by", 0] },
           createdAt: 1,
+          course_published_date: { $ifNull: ["$course_published_date", ""] },
           updatedAt: 1,
-          is_completed: 1,
           is_favourite: 1,
-          course_progress: 1,
           // current_topic_doc: 1,
           // current_topic_id: { $arrayElemAt: ["$current_topic.current_topic_id", 0] },
-          next_chapter: {
-            $cond: {
-              if: { $ifNull: ["$next_chapter", false] },
-              then: {
-                chapter_id: "$next_chapter.chapter_id",
-                chapter_rank: "$next_chapter.chapter_rank",
-                chapter_title: "$next_chapter.chapter_title",
-                chapter_duration: "$next_chapter.chapter_duration",
-                chapter_description: "$next_chapter.chapter_description",
-                video_url: "$next_chapter.video_url", // or preview_url, etc.
-                // thumbnail:    "$next_chapter.chapter_thumbnail",
-                // is_free:      "$next_chapter.is_free",         // if you have preview chapters
-              },
-              else: null,
-            },
-          },
           current_chapter: {
             $cond: {
               if: { $ifNull: ["$current_chapter", false] },
@@ -1103,6 +1005,93 @@ const getCourse = async (
           data: [],
         };
     return response;
+  } catch (error) {
+    return {
+      status: 412,
+      message: error.message,
+      data: [],
+    };
+  }
+};
+
+const addNewCourse = async (course_id, student_id) => {
+  try {
+    const addNewCoursePayload = await purchase.create({
+      purchase_id: randomBytes(6).toString("hex"),
+      student_id: student_id,
+      course_id: course_id,
+      transaction_id: "FR" + randomBytes(6).toString("hex"),
+      payment_method: "Free",
+      course_amount: 0,
+      if_free: true,
+    });
+
+    await course.updateOne(
+      { course_id: course_id },
+      {
+        $inc: {
+          student_enrolled: 1,
+        },
+      }
+    );
+
+    // await revenueModel.updateOne(
+    //   { instructor_id: instructor_id, revenue_month: month },
+    //   {
+    //     $inc: {
+    //       total_sales: 1,
+    //       total_amount: parseInt(amount),
+    //     },
+    //   }
+    // );
+
+    const chapters = await chapter
+      .find({ course_id }, { chapter_id: 1, chapter_rank: 1 })
+      .sort({ chapter_rank: 1 })
+      .lean();
+
+    const topics = await topic
+      .find({ course_id }, { topic_id: 1, chapter_id: 1, topic_rank: 1 })
+      .sort({ topic_rank: 1 })
+      .lean();
+
+    const topicMap = {};
+
+    topics.forEach((t) => {
+      if (!topicMap[t.chapter_id]) {
+        topicMap[t.chapter_id] = [];
+      }
+      topicMap[t.chapter_id].push(t);
+    });
+
+    const payload = chapters.map((ch, index) => {
+      const chapterTopics = topicMap[ch.chapter_id] || [];
+      const firstTopic = chapterTopics.length > 0 ? chapterTopics[0] : null;
+
+      const isFirstChapter = index == 0;
+      return {
+        completion_id: randomBytes(6).toString("hex"),
+        course_id,
+        student_id,
+
+        chapter_id: ch.chapter_id,
+        current_chapter_id: ch.chapter_id,
+        chapter_rank: ch.chapter_rank,
+        course_status: "new",
+        // ✅ Only first chapter is active
+        chapter_status: isFirstChapter ? "inprogress" : "new",
+        // // ✅ ONLY first chapter gets topic
+        // current_topic_id: isFirstChapter ? firstTopic?.topic_id : null,
+        current_topic_id: firstTopic?.topic_id || null,
+        topic_array: [],
+      };
+    });
+    await courseCompletionModel.insertMany(payload);
+    return {
+      status: 201,
+      message: CONSTANT.PAYLOAD.RECORD_CREATED_SUCCESSFULLY,
+      data: addNewCoursePayload,
+    };
   } catch (error) {
     return {
       status: 412,
@@ -1439,8 +1428,9 @@ module.exports = {
   signUp,
   login,
   getStudentList,
-  updateProfile,
+  updateStatus,
   getCourse,
+  addNewCourse,
   forgetPassword,
   verifyOtp,
   changePassword,

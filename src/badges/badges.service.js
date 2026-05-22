@@ -1,7 +1,7 @@
 const { randomBytes } = require("crypto");
 const { CONSTANT, mongoManager } = require("../../packages/manager");
 const badges = require("../model/badges.model");
-const subbadges = require("../model/subbadges.model");
+
 mongoManager.connect();
 
 const getbadges = async (page, limit, search, status) => {
@@ -56,13 +56,13 @@ const getbadges = async (page, limit, search, status) => {
   }
 };
 
-const addBadges = async (type, image, score) => {
+const addBadges = async (type, image, category) => {
   try {
     // const { title, icon } = payload
     const addBadgesPayload = await badges.create({
-      badges_id: randomBytes(6).toString("hex"),
-      badges_type: type,
-      badges_score: score,
+      badge_id: randomBytes(6).toString("hex"),
+      badge_type: type,
+      badge_category: category,
       badge_image: image,
     });
     const response =

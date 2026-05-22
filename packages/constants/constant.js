@@ -42,8 +42,10 @@ SERVER_INTERNAl_ERROR:"Internal server error. Please try again later."
     INVALID_CREDS: "Invalid credentials",
     SOMETHING_WENT_WRONG: "Something Went Wrong",
     PENDING: "Pending",
-    ACTIVE: "Active",
-    INACTIVE: "Inactive",
+    ACTIVE: "active",
+    INACTIVE: "in_active",
+    SUSPENDED:"suspended",
+
     ALREADY_UPDATED: "Already Updated",
     UNAUTHORIZED: "Unauthorized",
     ACCESS_DENIED: "Access Denied",
