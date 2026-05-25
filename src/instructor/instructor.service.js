@@ -198,9 +198,31 @@ const getInstructor = async (
         },
       },
       {
+        $lookup: {
+          from: "reviews",
+          localField: "instructor_id",
+          foreignField: "instructor_id",
+          as: "reviews",
+        },
+      },
+      {
         $addFields: {
           course_count: { $size: { $ifNull: ["$courses", []] } },
           total_student: { $size: { $ifNull: ["$purchases", []] } },
+          avg_instructor_rating: {
+            $round: [
+              {
+                $avg: {
+                  $filter: {
+                    input: "$reviews.instructor_rating",
+                    as: "rating",
+                    cond: { $gt: ["$$rating", 0] }, // ignore 0/false
+                  },
+                },
+              },
+              1,
+            ],
+          },
         },
       },
       ...(Object.keys(sortStage).length ? [sortStage] : []),
@@ -228,6 +250,7 @@ const getInstructor = async (
           total_rating: {
             $sum: { $ifNull: ["$reviews.instructor_rating", 0] },
           },
+          avg_instructor_rating:1,
           total_payment: {
             $sum: {
               $map: {

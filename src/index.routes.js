@@ -8,9 +8,11 @@ const { questionRoutes } = require("./question");
 const { quizRoutes } = require("./quiz");
 const { couponRoutes } = require("./coupon");
 const { badgesRoutes } = require("./badges");
+const { adminRoutes } = require("./admin");
 
 const apiRoutes = express.Router({ mergeParams: true });
 
+apiRoutes.use("/v1/admin", adminRoutes);
 apiRoutes.use("/v1/student", studentRoutes);
 apiRoutes.use("/v1/category", categoryRoutes);
 apiRoutes.use("/v1/course", courseRoutes);

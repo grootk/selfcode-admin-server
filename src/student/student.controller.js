@@ -169,8 +169,10 @@ const login = async (req, res, next) => {
 
 const getStudentList = async (req, res, next) => {
   try {
-    const { page, limit, monthFilter, yearFilter, status, search } = req.query;
+    const { student_id, page, limit, monthFilter, yearFilter, status, search } =
+      req.query;
     const data = await studentService.getStudentList(
+      student_id,
       page,
       limit,
       monthFilter,
@@ -212,8 +214,16 @@ const updateStatus = async (req, res, next) => {
 
 const getCourse = async (req, res, next) => {
   try {
-    const { student_id, page, limit } = req.query;
-    const data = await studentService.getCourse(student_id, page, limit);
+    const { student_id, page, limit, monthFilter, yearFilter, search } =
+      req.query;
+    const data = await studentService.getCourse(
+      student_id,
+      page,
+      limit,
+      monthFilter,
+      yearFilter,
+      search
+    );
     return successHandler(data, req, res, next);
   } catch (err) {
     return errorHandler(
@@ -241,6 +251,69 @@ const addNewCourse = async (req, res, next) => {
       {
         status: 412,
         message: err.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
+const getCertificate = async (req, res, next) => {
+  try {
+    const { student_id, page, limit, monthFilter, yearFilter } = req.query;
+    const getCertificatePayload = await studentService.getCertificate(
+      student_id,
+      page,
+      limit,
+      monthFilter,
+      yearFilter
+    );
+    return successHandler(getCertificatePayload, req, res, next);
+  } catch (error) {
+    return errorHandler(
+      {
+        status: 412,
+        message: error.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
+const addNewCertificate = async (req, res, next) => {
+  try {
+    const { course_id, student_id } = req.body;
+    const addNewCertificatePayload = await studentService.addNewCertificate(
+      course_id,
+      student_id
+    );
+    return successHandler(addNewCertificatePayload, req, res, next);
+  } catch (error) {
+    return errorHandler(
+      {
+        status: 412,
+        message: err.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
+const getMonthlyStats = async (req, res, next) => {
+  try {
+    const { monthFilter, yearFilter } = req.query;
+    const data = await studentService.getMonthlyStats(monthFilter, yearFilter);
+    return successHandler(data, req, res, next);
+  } catch (error) {
+    return errorHandler(
+      {
+        status: 412,
+        message: error.message,
       },
       req,
       res,
@@ -366,6 +439,9 @@ module.exports = {
   updateStatus,
   getCourse,
   addNewCourse,
+  getCertificate,
+  addNewCertificate,
+  getMonthlyStats,
   forgetPassword,
   verifyOtp,
   changePassword,

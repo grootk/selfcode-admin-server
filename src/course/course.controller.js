@@ -37,6 +37,7 @@ const getCourse = async (req, res, next) => {
       yearFilter,
       instructor_id,
       student_id,
+      certificate,
     } = req.query;
     const data = await courseService.getCourse(
       instructor_id,
@@ -46,7 +47,8 @@ const getCourse = async (req, res, next) => {
       status, //"published", "draft"
       monthFilter,
       yearFilter,
-      student_id
+      student_id,
+      certificate
     );
     return successHandler(data, req, res, next);
   } catch (error) {
@@ -122,7 +124,7 @@ const updateCourse = async (req, res, next) => {
     const {
       course_id,
       category_id,
-      subcategory_id,
+      sub_category_id,
       title,
       description,
       overview,
@@ -139,11 +141,12 @@ const updateCourse = async (req, res, next) => {
       coupons,
       promotinal_coupons,
       price_type,
+      rejection_reason,
     } = req.body;
     const data = await courseService.updateCourse(
       course_id,
       category_id,
-      subcategory_id,
+      sub_category_id,
       title,
       description,
       overview,
@@ -160,14 +163,15 @@ const updateCourse = async (req, res, next) => {
       promotinal,
       coupons,
       promotinal_coupons,
-      price_type
+      price_type,
+      rejection_reason
     );
     return successHandler(data, req, res, next);
   } catch (error) {
     return errorHandler(
       {
         status: 412,
-        message: err.message,
+        message: error.message,
         data: [],
       },
       req,
@@ -199,9 +203,8 @@ const deleteCourse = async (req, res, next) => {
 
 const getCourseDetail = async (req, res, next) => {
   try {
-    const instructor_id = req.data.sub;
     const { course_id } = req.query;
-    const data = await courseService.getCourseDetail(course_id, instructor_id);
+    const data = await courseService.getCourseDetail(course_id);
     return successHandler(data, req, res, next);
   } catch (error) {
     return errorHandler(
@@ -517,6 +520,24 @@ const getStudent = async (req, res, next) => {
   }
 };
 
+const getMonthlyStats = async (req, res, next) => {
+  try {
+    const { month, year, course_id } = req.query;
+    const data = await courseService.getMonthlyStats(month, year, course_id);
+    return successHandler(data, req, res, next);
+  } catch (error) {
+    return errorHandler(
+      {
+        status: 412,
+        message: error.message,
+      },
+      req,
+      res,
+      next
+    );
+  }
+};
+
 // const getQuizAnalytics = async (req, res, next) => {
 //   try {
 //     const instructor_id = req.data.sub;
@@ -558,5 +579,6 @@ module.exports = {
 
   addFavourite,
   getStudent,
+  getMonthlyStats,
   // getQuizAnalytics,
 };

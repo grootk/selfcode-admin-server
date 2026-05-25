@@ -10,6 +10,9 @@ const student = require("../model/student.model");
 const chapterModel = require("../model/chapter.model");
 const courseModel = require("../model/course.model");
 const activity = require("../model/activity.model");
+const purchase = require("../model/purchase.model");
+const revenueModel = require("../model/revenue.model");
+const couponModel = require("../model/coupon.model");
 const { getMonthMap } = require("../../packages/handlers");
 
 mongoManager.connect();
@@ -92,11 +95,11 @@ const getCourse = async (
   page,
   limit,
   search,
-  status,
-  sort_by,
+  status, //"published", "draft"
   monthFilter,
   yearFilter,
-  student_id
+  student_id,
+  certificate
 ) => {
   try {
     const skip = (page - 1) * limit;
@@ -117,6 +120,8 @@ const getCourse = async (
       statusMatch.course_status = "inreview";
     } else if (status === "rejected") {
       statusMatch.course_status = "rejected";
+    } else if (status === "pending") {
+      statusMatch.course_status = "pending";
     }
 
     // let sortStage = {};
@@ -153,6 +158,7 @@ const getCourse = async (
         },
       };
     }
+    const isCertificate = certificate === true || certificate === "true";
 
     const getCoursePayload = await course.aggregate([
       {
@@ -211,6 +217,43 @@ const getCourse = async (
           as: "purchases",
         },
       },
+
+      // ✅ CASE 1: certificate = true → ONLY certificate logic
+      ...(isCertificate && student_id
+        ? [
+            {
+              $lookup: {
+                from: "certificates",
+                localField: "course_id",
+                foreignField: "course_id",
+                as: "certificates",
+              },
+            },
+            {
+              $match: {
+                certificates: {
+                  $not: {
+                    $elemMatch: { student_id: student_id },
+                  },
+                },
+              },
+            },
+          ]
+        : // ✅ CASE 2: certificate = false → ONLY purchase logic
+          student_id
+          ? [
+              {
+                $match: {
+                  purchases: {
+                    $not: {
+                      $elemMatch: { student_id: student_id },
+                    },
+                  },
+                },
+              },
+            ]
+          : // ✅ CASE 3: no student_id → no filter
+            []),
       {
         $lookup: {
           from: "instructors",
@@ -244,112 +287,8 @@ const getCourse = async (
               },
             },
           },
-          // completed_count: {
-          //   $size: {
-          //     $filter: {
-          //       input: "$completions",
-          //       as: "c",
-          //       cond: { $eq: ["$$c.course_status", "complete"] },
-          //     },
-          //   },
-          // },
-          // completion_rate: {
-          //   $cond: {
-          //     if: { $gt: [{ $size: "$completions" }, 0] },
-          //     then: {
-          //       $multiply: [
-          //         {
-          //           $divide: [
-          //             {
-          //               $size: {
-          //                 $filter: {
-          //                   input: "$completions",
-          //                   as: "c",
-          //                   cond: { $eq: ["$$c.course_status", "complete"] },
-          //                 },
-          //               },
-          //             },
-          //             { $size: "$completions" },
-          //           ],
-          //         },
-          //         100,
-          //       ],
-          //     },
-          //     else: 0,
-          //   },
-          // },
         },
       },
-      // {
-      //   $setWindowFields: {
-      //     sortBy: { total_enrolled: -1 },
-      //     output: {
-      //       enrollment_rank: { $rank: {} },
-      //     },
-      //   },
-      // },
-      // {
-      //   $addFields: {
-      //     top_seller: {
-      //       $and: [
-      //         { $lte: ["$enrollment_rank", 3] },
-      //         { $gt: ["$total_enrolled", 0] },
-      //       ],
-      //     },
-      //   },
-      // },
-      // {
-      //   $addFields: {
-      //     // sort chapters by rank first
-      //     sorted_chapters: {
-      //       $sortArray: {
-      //         input: "$chapters",
-      //         sortBy: { chapter_rank: 1 },
-      //       },
-      //     },
-
-      //     // sort topics (important!)
-      //     sorted_topics: {
-      //       $sortArray: {
-      //         input: "$topic",
-      //         sortBy: { topic_rank: 1 },
-      //       },
-      //     },
-      //   },
-      // },
-      // {
-      //   $addFields: {
-      //     current_chapter: {
-      //       $arrayElemAt: ["$sorted_chapters", 0],
-      //     },
-      //     next_chapter: {
-      //       $arrayElemAt: ["$sorted_chapters", 1],
-      //     },
-      //   },
-      // },
-      // {
-      //   $addFields: {
-      //     current_chapter: {
-      //       chapter_id: "$current_chapter.chapter_id",
-      //       chapter_rank: "$current_chapter.chapter_rank",
-      //       chapter_title: "$current_chapter.chapter_title",
-      //       chapter_duration: "$current_chapter.chapter_duration",
-
-      //       current_topic_id: {
-      //         $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 0] }, null],
-      //       },
-      //       next_topic_id: {
-      //         $ifNull: [{ $arrayElemAt: ["$sorted_topics.topic_id", 1] }, null],
-      //       },
-      //     },
-      //     next_chapter: {
-      //       chapter_id: "$next_chapter.chapter_id",
-      //       chapter_rank: "$next_chapter.chapter_rank",
-      //       chapter_title: "$next_chapter.chapter_title",
-      //       chapter_duration: "$next_chapter.chapter_duration",
-      //     },
-      //   },
-      // },
       { $sort: { createdAt: -1 } },
       { $skip: skip },
       { $limit: Number(limit) },
@@ -537,7 +476,7 @@ const addCourse = async (
 const updateCourse = async (
   course_id,
   category_id,
-  subcategory_id,
+  sub_category_id,
   title,
   description,
   overview,
@@ -554,12 +493,52 @@ const updateCourse = async (
   promotinal,
   coupons,
   promotinal_coupons,
-  price_type
+  price_type,
+  rejection_reason
 ) => {
   try {
     let review_date;
     if (status === "inreview") {
       review_date = new Date();
+    }
+    if (status === "published") {
+      review_date = new Date();
+    }
+    if (status == "rejected") {
+      review_date = new Date();
+    }
+
+    if (promotinal === true || promotinal === "true") {
+      const categoryArray = [category_id, sub_category_id].filter(Boolean);
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const promotionalCoupons = await couponModel.aggregate([
+        {
+          $match: {
+            is_promotional: true,
+            coupon_status: CONSTANT.STATUS.ACTIVE,
+            category_id: { $in: categoryArray },
+          },
+        },
+        {
+          $match: {
+            // ✅ Correct date comparison
+            coupon_start_date: { $lte: endOfDay },
+            coupon_end_date: { $gte: startOfDay },
+          },
+        },
+        {
+          $project: {
+            coupon_code: 1,
+          },
+        },
+      ]);
+
+      const promotinal_coupons = promotionalCoupons.map((c) => c.coupon_id);
     }
     const updateCoursePayload = await course.findOneAndUpdate(
       { course_id: course_id },
@@ -578,6 +557,9 @@ const updateCourse = async (
         course_thumbnail: thumbnail,
         course_status: status,
         course_review_date: review_date,
+        course_published_date: review_date,
+        course_rejected_date: review_date,
+        course_rejection_reason: rejection_reason,
         course_promovideo: promovideo,
         skill_gained: skill,
         is_promotional: promotinal,
@@ -662,12 +644,13 @@ const getCourseDetail = async (course_id, instructor_id) => {
           pipeline: [
             {
               $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$course_id", "$$cid"] },
-                    { $eq: ["$course_status", "completed"] },
-                  ],
-                },
+                $expr: { $eq: ["$course_id", "$$cid"] },
+              },
+            },
+            {
+              $project: {
+                student_id: 1,
+                chapter_status: 1,
               },
             },
           ],
@@ -690,14 +673,14 @@ const getCourseDetail = async (course_id, instructor_id) => {
           as: "subCategory",
         },
       },
-      {
-        $lookup: {
-          from: "instructors",
-          localField: "instructor_id",
-          foreignField: "instructor_id",
-          as: "instructor",
-        },
-      },
+      // {
+      //   $lookup: {
+      //     from: "instructors",
+      //     localField: "instructor_id",
+      //     foreignField: "instructor_id",
+      //     as: "instructor",
+      //   },
+      // },
       {
         $lookup: {
           from: "chapters",
@@ -721,11 +704,61 @@ const getCourseDetail = async (course_id, instructor_id) => {
           ],
         },
       },
+
+      {
+        $addFields: {
+          total_students: {
+            $size: {
+              $setUnion: ["$course_complete.student_id", []],
+            },
+          },
+          completed_rows: {
+            $size: {
+              $filter: {
+                input: "$course_complete",
+                as: "c",
+                cond: { $eq: ["$$c.chapter_status", "completed"] },
+              },
+            },
+          },
+        },
+      },
       {
         $addFields: {
           course_duration: { $sum: "$chapters.chapter_duration" },
           quiz_count: { $size: "$topic" },
-          // course_completed: { $size: "$course_complete" },
+          course_progress: {
+            $cond: {
+              if: { $eq: ["$total_students", 0] },
+              then: 0,
+              else: {
+                $round: [
+                  {
+                    $multiply: [
+                      {
+                        $divide: [
+                          {
+                            $size: {
+                              $filter: {
+                                input: "$course_complete",
+                                as: "c",
+                                cond: {
+                                  $eq: ["$$c.chapter_status", "completed"],
+                                },
+                              },
+                            },
+                          },
+                          "$total_students",
+                        ],
+                      },
+                      100,
+                    ],
+                  },
+                  0,
+                ],
+              },
+            },
+          },
         },
       },
       {
@@ -762,7 +795,7 @@ const getCourseDetail = async (course_id, instructor_id) => {
           skill_gained: { $ifNull: ["$skill_gained", 0] },
           reviewed_by: { $ifNull: ["$reviewed_by", 0] },
           course_duration: { $ifNull: ["$course_duration", 0] },
-          // course_completed: { $ifNull: ["$course_completed", false] },
+          course_progress: { $ifNull: ["$course_progress", 0] },
           is_promotional: { $ifNull: ["$is_promotional", false] },
           instructor_id: { $ifNull: ["$instructor_id", ""] },
           createdAt: { $ifNull: ["$createdAt", null] },
@@ -773,62 +806,62 @@ const getCourseDetail = async (course_id, instructor_id) => {
       },
     ]);
 
-    const getPopularCourses = await course.aggregate([
-      {
-        $match: {
-          category_id: getCourseDetailPayload[0]?.category_id,
-          sub_category_id: getCourseDetailPayload[0]?.sub_category_id,
-        },
-      },
-      {
-        $lookup: {
-          from: "categories",
-          localField: "category_id",
-          foreignField: "category_id",
-          as: "category",
-        },
-      },
-      {
-        $lookup: {
-          from: "sub_categories",
-          localField: "sub_category_id",
-          foreignField: "sub_category_id",
-          as: "subCategory",
-        },
-      },
+    // const getPopularCourses = await course.aggregate([
+    //   {
+    //     $match: {
+    //       category_id: getCourseDetailPayload[0]?.category_id,
+    //       sub_category_id: getCourseDetailPayload[0]?.sub_category_id,
+    //     },
+    //   },
+    //   {
+    //     $lookup: {
+    //       from: "categories",
+    //       localField: "category_id",
+    //       foreignField: "category_id",
+    //       as: "category",
+    //     },
+    //   },
+    //   {
+    //     $lookup: {
+    //       from: "sub_categories",
+    //       localField: "sub_category_id",
+    //       foreignField: "sub_category_id",
+    //       as: "subCategory",
+    //     },
+    //   },
 
-      { $sort: { student_enrolled: -1 } },
-      { $limit: Number(3) },
-      {
-        $project: {
-          _id: 0,
-          course_id: 1,
-          category_id: 1,
-          sub_category_id: 1,
-          category_title: {
-            $ifNull: [{ $arrayElemAt: ["$category.category_title", 0] }, ""],
-          },
-          sub_category_title: {
-            $ifNull: [
-              { $arrayElemAt: ["$subCategory.sub_category_title", 0] },
-              "",
-            ],
-          },
-          course_title: { $ifNull: ["$course_title", ""] },
-          course_thumbnail: { $ifNull: ["$course_thumbnail", ""] },
-          course_about: { $ifNull: ["$course_description", ""] },
-          createdAt: { $ifNull: ["$createdAt", null] },
-        },
-      },
-    ]);
+    //   { $sort: { student_enrolled: -1 } },
+    //   { $limit: Number(3) },
+    //   {
+    //     $project: {
+    //       _id: 0,
+    //       course_id: 1,
+    //       category_id: 1,
+    //       sub_category_id: 1,
+    //       category_title: {
+    //         $ifNull: [{ $arrayElemAt: ["$category.category_title", 0] }, ""],
+    //       },
+    //       sub_category_title: {
+    //         $ifNull: [
+    //           { $arrayElemAt: ["$subCategory.sub_category_title", 0] },
+    //           "",
+    //         ],
+    //       },
+    //       course_title: { $ifNull: ["$course_title", ""] },
+    //       course_thumbnail: { $ifNull: ["$course_thumbnail", ""] },
+    //       course_about: { $ifNull: ["$course_description", ""] },
+    //       createdAt: { $ifNull: ["$createdAt", null] },
+    //     },
+    //   },
+    // ]);
 
-    const count = await course.countDocuments();
+    const count = await course.countDocuments({ course_id });
     const response = getCourseDetailPayload.length
       ? {
           status: 200,
           message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
           count: count,
-          getPopularCourses: getPopularCourses,
+          // getPopularCourses: getPopularCourses,
           data: getCourseDetailPayload,
         }
       : {
@@ -1817,189 +1850,6 @@ const getStudent = async (
     const skip = (page - 1) * limit;
     monthFilter = await getMonthMap(monthFilter);
 
-    // const getStudentPayload = await student.aggregate([
-    //   {
-    //     $lookup: {
-    //       from: "purchases",
-    //       let: { sid: "$student_id" },
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             $expr: {
-    //               $and: [
-    //                 { $eq: ["$student_id", "$$sid"] },
-    //                 { $eq: ["$course_id", course_id] },
-    //               ],
-    //             },
-    //           },
-    //         },
-    //       ],
-    //       as: "purchases",
-    //     },
-    //   },
-
-    //   {
-    //     $match: {
-    //       "purchases.0": { $exists: true },
-    //       ...(monthFilter && yearFilter
-    //         ? {
-    //             $expr: {
-    //               $and: [
-    //                 {
-    //                   $eq: [
-    //                     {
-    //                       $month: { $arrayElemAt: ["$purchases.createdAt", 0] },
-    //                     },
-    //                     Number(monthFilter),
-    //                   ],
-    //                 },
-    //                 {
-    //                   $eq: [
-    //                     {
-    //                       $year: { $arrayElemAt: ["$purchases.createdAt", 0] },
-    //                     },
-    //                     Number(yearFilter),
-    //                   ],
-    //                 },
-    //               ],
-    //             },
-    //           }
-    //         : {}),
-    //       ...(search
-    //         ? {
-    //             $or: [
-    //               { student_first_name: { $regex: search, $options: "i" } },
-    //               { student_last_name: { $regex: search, $options: "i" } },
-    //             ],
-    //           }
-    //         : {}),
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "chapters",
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             course_id: course_id,
-    //           },
-    //         },
-    //       ],
-    //       as: "chapter",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "quizzes",
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             course_id: course_id,
-    //           },
-    //         },
-    //       ],
-    //       as: "quizzes",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "submissions",
-    //       let: { sid: "$student_id", quizIds: "$quizzes.quiz_id" },
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             $expr: {
-    //               $and: [
-    //                 { $eq: ["$student_id", "$$sid"] },
-    //                 { $in: ["$quiz_id", "$$quizIds"] }, // Only submissions for this course's quizzes
-    //               ],
-    //             },
-    //           },
-    //         },
-    //       ],
-    //       as: "submission",
-    //     },
-    //   },
-
-    //   {
-    //     $lookup: {
-    //       from: "course_completions",
-    //       let: { sid: "$student_id", cid: course_id },
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             $expr: {
-    //               $and: [
-    //                 { $eq: ["$student_id", "$$sid"] },
-    //                 { $eq: ["$course_id", "$$cid"] },
-    //                 { $eq: ["$chapter_status", "completed"] },
-    //               ],
-    //             },
-    //           },
-    //         },
-    //       ],
-    //       as: "chapter_completed",
-    //     },
-    //   },
-
-    //   {
-    //     $addFields: {
-    //       chapter_count: { $size: "$chapter" },
-    //       completed_chapters_count: {
-    //         $size: { $ifNull: ["$chapter_completed", []] },
-    //       },
-    //       avg_score: {
-    //         $cond: [
-    //           { $eq: [{ $size: "$submission" }, 0] },
-    //           0,
-    //           {
-    //             $divide: [
-    //               { $sum: "$submission.total_score" },
-    //               { $size: "$submission" },
-    //             ],
-    //           },
-    //         ],
-    //       },
-    //     },
-    //   },
-    //   {
-    //     $addFields: {
-    //       course_progress: {
-    //         $cond: {
-    //           if: { $eq: ["$chapter_count", 0] },
-    //           then: 0,
-    //           else: {
-    //             $divide: ["$completed_chapters_count", "$chapter_count"],
-    //           },
-    //         },
-    //       },
-    //     },
-    //   },
-
-    //   { $skip: Number(skip) },
-    //   { $limit: Number(limit) },
-    //   {
-    //     $facet: {
-    //       metadata: [{ $count: "total" }],
-    //       data: [
-    //         {
-    //           $project: {
-    //             _id: 0,
-    //             student_id: { $ifNull: ["$student_id", ""] },
-    //             student_first_name: { $ifNull: ["$student_first_name", ""] },
-    //             student_last_name: { $ifNull: ["$student_last_name", ""] },
-    //             student_avatar: { $ifNull: ["$student_avatar", ""] },
-    //             enrolledAt: { $arrayElemAt: ["$purchases.createdAt", 0] },
-    //             student_country: 1,
-    //             student_state: 1,
-    //             course_progress: 1,
-    //             avg_score: 1,
-    //           },
-    //         },
-    //       ],
-    //     },
-    //   },
-    // ]);
 
     const result = await student.aggregate([
       {
@@ -2388,6 +2238,137 @@ const getStudent = async (
 //   }
 // };
 
+const getMonthlyStats = async (month, year, course_id) => {
+  try {
+    const MONTH_NAMES = [
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december",
+    ];
+
+    const currentYear = year ? Number(year) : new Date().getFullYear();
+
+    let monthFilter = {};
+    if (month) {
+      const monthIndex = MONTH_NAMES.indexOf(month.toLowerCase());
+      if (monthIndex === -1) {
+        return { status: 409, message: "Invalid month name", data: [] };
+      }
+      monthFilter = {
+        $expr: {
+          $and: [
+            { $eq: [{ $month: "$createdAt" }, monthIndex + 1] },
+            { $eq: [{ $year: "$createdAt" }, currentYear] },
+          ],
+        },
+      };
+    } else {
+      monthFilter = {
+        $expr: { $eq: [{ $year: "$createdAt" }, currentYear] },
+      };
+    }
+
+    // if (course_id) {
+    //   filter.course_id = course_id;
+    // }
+    // const instructorCourses = await courseModel
+    //   .find(filter, { _id: 0, course_id: 1, course_price: 1 })
+    //   .lean();
+
+    // const courseIds = instructorCourses.map((c) => c.course_id);
+
+    // if (courseIds.length === 0) {
+    //   return { status: 409, message: "No courses found", data: [] };
+    // }
+
+    const learnerStats = await purchase.aggregate([
+      {
+        $match: {
+          course_id: course_id,
+          ...monthFilter,
+        },
+      },
+      {
+        $group: {
+          _id: { $month: "$createdAt" },
+          total_learners: { $sum: 1 },
+          total_amount: { $sum: "$course_amount" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const revenueStats = await revenueModel.aggregate([
+      {
+        $match: {
+          course_id: course_id,
+
+          ...monthFilter,
+        },
+      },
+      {
+        $group: {
+          _id: { $month: "$createdAt" },
+          total_revenue: { $sum: "$total_amount" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const monthlyData = {};
+
+    MONTH_NAMES.forEach((m, index) => {
+      monthlyData[m] = {
+        total_learners: 0,
+        total_revenue: 0,
+        total_amount: 0,
+      };
+    });
+
+    learnerStats.forEach((item) => {
+      const monthName = MONTH_NAMES[item._id - 1];
+      monthlyData[monthName].total_learners = item.total_learners;
+      monthlyData[monthName].total_amount = item.total_amount;
+    });
+
+    revenueStats.forEach((item) => {
+      const monthName = MONTH_NAMES[item._id - 1];
+      monthlyData[monthName].total_revenue = item.total_revenue;
+    });
+
+    const finalData = month
+      ? { [month.toLowerCase()]: monthlyData[month.toLowerCase()] }
+      : monthlyData;
+
+    // const courseCount = await courseModel.countDocuments({
+    //   instructor_id: instructor_id,
+    // });
+
+    return {
+      status: 200,
+      message: "Monthly stats fetched successfully",
+      year: currentYear,
+      // courseCount: courseCount,
+      data: finalData,
+    };
+  } catch (error) {
+    return {
+      status: 412,
+      message: error.message,
+      data: [],
+    };
+  }
+};
+
 module.exports = {
   getAllCourses,
   getCourse,
@@ -2409,5 +2390,6 @@ module.exports = {
 
   addFavourite,
   getStudent,
+  getMonthlyStats,
   // getQuizAnalytics,
 };

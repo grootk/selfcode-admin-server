@@ -66,9 +66,13 @@ const courseModel = new mongoose.Schema(
     },
     course_status: {
       type: String,
-      enum: ["published", "draft", "inreview", "rejected"],
+      enum: ["published", "draft", "inreview", "rejected", "pending"],
       default: "draft",
     },
+    // course_status_date: {
+    //   type: Date,
+    //   required: false,
+    // },
     course_review_date: {
       type: Date,
       required: false,

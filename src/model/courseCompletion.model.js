@@ -37,7 +37,7 @@ const completionModel = new mongoose.Schema(
         },
         topic_status: {
           type: String,
-          enum: ["completed", "new"],
+          enum: ["completed", "new","inprogress"],
           default: null,
         },
       },

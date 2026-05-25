@@ -13,29 +13,88 @@ const activity = require("../model/activity.model");
 const courseModel = require("../model/course.model");
 mongoManager.connect();
 
-const getcoupon = async (instructor_id, page, limit) => {
+const getcoupon = async (admin_id, page, limit, status, coupon_id) => {
   try {
-    const skip = (page - 1) * limit;
-    const getCouponPayload = await couponModel
-      .find({ instructor_id: instructor_id })
-      .skip(skip)
-      .limit(limit);
-    const count = await couponModel.countDocuments({
-      instructor_id: instructor_id,
-    });
-    const response = getCouponPayload
-      ? {
-        status: 200,
-        count: count,
-        message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
-        data: getCouponPayload,
+    if (coupon_id) {
+      const getCouponPayload = await couponModel.aggregate([
+        {
+          $match: { coupon_id: coupon_id },
+        },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "category_id", // array in coupon
+            foreignField: "category_id", // single in category
+            as: "category",
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            coupon_id: 1,
+            coupon_title: 1,
+            coupon_code: 1,
+            coupon_discount: 1,
+            coupon_type: 1,
+            coupon_status: 1,
+            is_promotional: 1,
+            coupon_start_date: 1,
+            coupon_end_date: 1,
+            category: {
+              $map: {
+                input: "$category",
+                as: "cat",
+                in: {
+                  category_id: "$$cat.category_id",
+                  category_name: "$$cat.category_title",
+                },
+              },
+            },
+          },
+        },
+      ]);
+      const response = getCouponPayload.length
+        ? {
+            status: 200,
+            count: 1,
+            message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+            data: getCouponPayload,
+          }
+        : {
+            status: 409,
+            message: CONSTANT.STATUS.NOT_FOUND,
+            data: [],
+          };
+      return response;
+    } else {
+      const skip = (page - 1) * limit;
+      let checkMatch = {};
+      if (status) {
+        checkMatch.coupon_status = status;
       }
-      : {
-        status: 409,
-        message: CONSTANT.STATUS.NOT_FOUND,
-        data: [],
-      };
-    return response;
+      const getCouponPayload = await couponModel
+        .find({ instructor_id: admin_id, ...checkMatch })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+      const count = await couponModel.countDocuments({
+        instructor_id: admin_id,
+        ...checkMatch,
+      });
+      const response = getCouponPayload.length
+        ? {
+            status: 200,
+            count: count,
+            message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+            data: getCouponPayload,
+          }
+        : {
+            status: 409,
+            message: CONSTANT.STATUS.NOT_FOUND,
+            data: [],
+          };
+      return response;
+    }
   } catch (error) {
     return {
       status: 412,
@@ -102,19 +161,30 @@ const getcoupon = async (instructor_id, page, limit) => {
 //   }
 // };
 
-const addcoupon = async (instructor_id, title, type, discount, code) => {
+const addcoupon = async (
+  instructor_id,
+  title,
+  type,
+  discount,
+  code,
+  is_promotional,
+  category_id,
+  start_date,
+  end_date
+) => {
   try {
-    const coupon_id = randomBytes(6).toString("hex");
-    const couponItem = {
-      coupon_id: coupon_id,
+    const addcouponPayload = await couponModel.create({
+      coupon_id: randomBytes(6).toString("hex"),
       instructor_id: instructor_id,
       coupon_title: title,
       coupon_type: type,
       coupon_code: code,
       coupon_discount: discount,
-    };
-
-    const addcouponPayload = await couponModel.create(couponItem);
+      is_promotional: is_promotional,
+      category_id: category_id,
+      coupon_start_date: start_date,
+      coupon_end_date: end_date,
+    });
 
     const response = {
       status: 201,
@@ -129,31 +199,43 @@ const addcoupon = async (instructor_id, title, type, discount, code) => {
       data: [],
     };
   }
-};  
+};
 
-const updatecoupon = async (coupon_id, title, type, discount, code) => {
+const updatecoupon = async (
+  coupon_id,
+  title,
+  type,
+  discount,
+  is_promotional,
+  category_id,
+  start_date,
+  end_date
+) => {
   try {
     const updatecouponPayload = await coupon.findOneAndUpdate(
       { coupon_id: coupon_id },
       {
         coupon_title: title,
         coupon_type: type,
-        coupon_code: code,
         coupon_discount: discount,
+        is_promotional: is_promotional,
+        category_id: category_id,
+        coupon_start_date: start_date,
+        coupon_end_date: end_date,
       }
     );
     const response =
       updatecouponPayload !== null
         ? {
-          status: 202,
-          message: CONSTANT.PAYLOAD.RECORD_UPDATED_SUCCESSFULLY,
-          data: updatecouponPayload,
-        }
+            status: 202,
+            message: CONSTANT.PAYLOAD.RECORD_UPDATED_SUCCESSFULLY,
+            data: updatecouponPayload,
+          }
         : {
-          status: 409,
-          message: CONSTANT.STATUS.NOT_FOUND,
-          data: [],
-        };
+            status: 409,
+            message: CONSTANT.STATUS.NOT_FOUND,
+            data: [],
+          };
     return response;
   } catch (error) {
     return {
@@ -167,14 +249,18 @@ const updatecoupon = async (coupon_id, title, type, discount, code) => {
 const deletecoupon = async (coupon_id, instructor_id, force_delete) => {
   try {
     let deletecouponPayload;
-    const couponData = await coupon.findOne({ coupon_id: coupon_id }, { _id: 0, coupon_code: 1 });
-    const attachedCoupons = await courseModel.find({ course_coupons: { $in: couponData?.coupon_code } });
+    const couponData = await coupon.findOne(
+      { coupon_id: coupon_id },
+      { _id: 0, coupon_code: 1 }
+    );
+    const attachedCoupons = await courseModel.find({
+      course_coupons: { $in: couponData?.coupon_code },
+    });
 
     if (force_delete == "true") {
-
       await courseModel.updateMany(
-        { course_coupons: { $in: couponData?.coupon_code }},
-        { $pull: { course_coupons: couponData?.coupon_code } }
+        { promotional_coupons: { $in: couponData?.coupon_code } },
+        { $pull: { promotional_coupons: couponData?.coupon_code } }
       );
       const deletecouponPayload = await couponModel.findOneAndDelete({
         coupon_id: coupon_id,
@@ -182,15 +268,15 @@ const deletecoupon = async (coupon_id, instructor_id, force_delete) => {
       const response =
         deletecouponPayload !== null
           ? {
-            status: 202,
-            message: CONSTANT.PAYLOAD.RECORD_DELETED_SUCCESSFULLY,
-            data: deletecouponPayload,
-          }
+              status: 202,
+              message: CONSTANT.PAYLOAD.RECORD_DELETED_SUCCESSFULLY,
+              data: deletecouponPayload,
+            }
           : {
-            status: 409,
-            message: CONSTANT.STATUS.SOMETHING_WENT_WRONG,
-            data: [],
-          };
+              status: 409,
+              message: CONSTANT.STATUS.SOMETHING_WENT_WRONG,
+              data: [],
+            };
       return response;
     }
 
@@ -198,11 +284,9 @@ const deletecoupon = async (coupon_id, instructor_id, force_delete) => {
       return {
         status: 409,
         message: `The coupon ${couponData?.coupon_code} is assigned to course ${attachedCoupons[0]?.course_title}.Please detach before delete.`,
-        data: []
-      }
+        data: [],
+      };
     }
-
-
   } catch (error) {
     return {
       status: 412,

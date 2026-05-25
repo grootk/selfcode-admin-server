@@ -1,17 +1,10 @@
-const couponService = require("./coupon.service");
+const adminService = require("./admin.service");
 const { successHandler, errorHandler } = require("../../packages/handlers");
 
-const getcoupon = async (req, res, next) => {
+const getProfile = async (req, res, next) => {
   try {
     const admin_id = req.data.sub;
-    const { page, limit, status, coupon_id } = req.query;
-    const data = await couponService.getcoupon(
-      admin_id,
-      page,
-      limit,
-      status,
-      coupon_id
-    );
+    const data = await adminService.getProfile(admin_id);
     return successHandler(data, req, res, next);
   } catch (error) {
     return errorHandler(
@@ -27,7 +20,7 @@ const getcoupon = async (req, res, next) => {
   }
 };
 
-const addcoupon = async (req, res, next) => {
+const addadmin = async (req, res, next) => {
   try {
     const instructor_id = req.data.sub;
     const {
@@ -40,7 +33,7 @@ const addcoupon = async (req, res, next) => {
       start_date,
       end_date,
     } = req.body;
-    const data = await couponService.addcoupon(
+    const data = await adminService.addadmin(
       instructor_id,
       title,
       type,
@@ -66,11 +59,11 @@ const addcoupon = async (req, res, next) => {
   }
 };
 
-const updatecoupon = async (req, res, next) => {
+const updateadmin = async (req, res, next) => {
   try {
     const instructor_id = req.data.sub;
     const {
-      coupon_id,
+      admin_id,
       title,
       type,
       discount,
@@ -79,8 +72,8 @@ const updatecoupon = async (req, res, next) => {
       start_date,
       end_date,
     } = req.body;
-    const data = await couponService.updatecoupon(
-      coupon_id,
+    const data = await adminService.updateadmin(
+      admin_id,
       title,
       type,
       discount,
@@ -104,12 +97,12 @@ const updatecoupon = async (req, res, next) => {
   }
 };
 
-const deletecoupon = async (req, res, next) => {
+const deleteadmin = async (req, res, next) => {
   try {
     const instructor_id = req.data.sub;
-    const { coupon_id, force_delete } = req.query;
-    const data = await couponService.deletecoupon(
-      coupon_id,
+    const { admin_id, force_delete } = req.query;
+    const data = await adminService.deleteadmin(
+      admin_id,
       instructor_id,
       force_delete
     );
@@ -129,8 +122,8 @@ const deletecoupon = async (req, res, next) => {
 };
 
 module.exports = {
-  getcoupon,
-  addcoupon,
-  updatecoupon,
-  deletecoupon,
+  getProfile,
+  addadmin,
+  updateadmin,
+  deleteadmin,
 };

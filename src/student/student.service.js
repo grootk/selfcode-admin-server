@@ -8,7 +8,8 @@ const purchase = require("../model/purchase.model");
 const course = require("../model/course.model");
 const courseCompletionModel = require("../model/courseCompletion.model");
 const chapter = require("../model/chapter.model");
-const topic= require("../model/topic.model");
+const topic = require("../model/topic.model");
+const certificate = require("../model/certificate.model");
 const { getMonthMap } = require("../../packages/handlers");
 const { pipeline } = require("stream");
 
@@ -407,6 +408,7 @@ const login = async (email, password) => {
 // };
 
 const getStudentList = async (
+  student_id,
   page,
   limit,
   monthFilter,
@@ -431,6 +433,10 @@ const getStudentList = async (
 
     if (status) {
       matchStage.student_status = status;
+    }
+
+    if (student_id) {
+      matchStage.student_id = student_id;
     }
 
     let timeCheck = {};
@@ -740,14 +746,9 @@ const getCourse = async (
   student_id,
   page,
   limit,
-  search,
-  status,
-  sort_by,
   monthFilter,
   yearFilter,
-  type,
-  category_id,
-  instructor_id
+  search
 ) => {
   try {
     // const { page, limit, search, category_id, instructor_id } = payload;
@@ -760,8 +761,32 @@ const getCourse = async (
       };
     }
 
-    if (category_id) checkMatch.category_id = category_id;
-    if (instructor_id) checkMatch.instructor_id = instructor_id;
+    // if (category_id) checkMatch.category_id = category_id;
+    // if (instructor_id) checkMatch.instructor_id = instructor_id;
+
+    let timeCheck = {};
+
+    if (monthFilter || yearFilter) {
+      const dateConditions = [];
+      monthFilter = await getMonthMap(monthFilter);
+      if (monthFilter) {
+        dateConditions.push({
+          $eq: [{ $month: "$createdAt" }, Number(monthFilter)],
+        });
+      }
+
+      if (yearFilter) {
+        dateConditions.push({
+          $eq: [{ $year: "$createdAt" }, Number(yearFilter)],
+        });
+      }
+
+      timeCheck = {
+        $expr: {
+          $and: dateConditions,
+        },
+      };
+    }
 
     const pipeline = [
       { $match: { ...checkMatch } }, // search, category_id, instructor_id
@@ -787,7 +812,7 @@ const getCourse = async (
           as: "purchase",
         },
       },
-      { $match: { "purchase.0": { $exists: true } } }, // only keep purchased
+      { $match: { "purchase.0": { $exists: true }, ...timeCheck } }, // only keep purchased
 
       // ── is_favourite flag ────────────────────────────────────────
       {
@@ -1014,87 +1039,603 @@ const getCourse = async (
   }
 };
 
-const addNewCourse = async (course_id, student_id) => {
+// const addNewCourse = async (course_id, student_id) => {
+//   try {
+//     const addNewCoursePayload = await purchase.create({
+//       purchase_id: randomBytes(6).toString("hex"),
+//       student_id: student_id,
+//       course_id: course_id,
+//       transaction_id: "FR" + randomBytes(6).toString("hex"),
+//       payment_method: "Free",
+//       course_amount: 0,
+//       if_free: true,
+//     });
+
+//     await course.updateOne(
+//       { course_id: course_id },
+//       {
+//         $inc: {
+//           student_enrolled: 1,
+//         },
+//       }
+//     );
+
+//     // await revenueModel.updateOne(
+//     //   { instructor_id: instructor_id, revenue_month: month },
+//     //   {
+//     //     $inc: {
+//     //       total_sales: 1,
+//     //       total_amount: parseInt(amount),
+//     //     },
+//     //   }
+//     // );
+
+//     const chapters = await chapter
+//       .find({ course_id }, { chapter_id: 1, chapter_rank: 1 })
+//       .sort({ chapter_rank: 1 })
+//       .lean();
+
+//     const topics = await topic
+//       .find({ course_id }, { topic_id: 1, chapter_id: 1, topic_rank: 1 })
+//       .sort({ topic_rank: 1 })
+//       .lean();
+
+//     const topicMap = {};
+
+//     topics.forEach((t) => {
+//       if (!topicMap[t.chapter_id]) {
+//         topicMap[t.chapter_id] = [];
+//       }
+//       topicMap[t.chapter_id].push(t);
+//     });
+
+//     const payload = chapters.map((ch, index) => {
+//       const chapterTopics = topicMap[ch.chapter_id] || [];
+//       const firstTopic = chapterTopics.length > 0 ? chapterTopics[0] : null;
+
+//       const isFirstChapter = index == 0;
+//       return {
+//         completion_id: randomBytes(6).toString("hex"),
+//         course_id,
+//         student_id,
+
+//         chapter_id: ch.chapter_id,
+//         current_chapter_id: ch.chapter_id,
+//         chapter_rank: ch.chapter_rank,
+//         course_status: "new",
+//         // ✅ Only first chapter is active
+//         chapter_status: isFirstChapter ? "inprogress" : "new",
+//         // // ✅ ONLY first chapter gets topic
+//         // current_topic_id: isFirstChapter ? firstTopic?.topic_id : null,
+//         current_topic_id: firstTopic?.topic_id || null,
+//         topic_array: [],
+//       };
+//     });
+//     await courseCompletionModel.insertMany(payload);
+//     return {
+//       status: 201,
+//       message: CONSTANT.PAYLOAD.RECORD_CREATED_SUCCESSFULLY,
+//       data: addNewCoursePayload,
+//     };
+//   } catch (error) {
+//     return {
+//       status: 412,
+//       message: error.message,
+//       data: [],
+//     };
+//   }
+// };
+
+const addNewCourse = async (course_ids, student_id) => {
   try {
-    const addNewCoursePayload = await purchase.create({
+    // ✅ 1. Create purchases in bulk
+    const purchasePayload = course_ids.map((course_id) => ({
       purchase_id: randomBytes(6).toString("hex"),
-      student_id: student_id,
-      course_id: course_id,
+      student_id,
+      course_id,
       transaction_id: "FR" + randomBytes(6).toString("hex"),
       payment_method: "Free",
       course_amount: 0,
       if_free: true,
-    });
+    }));
 
-    await course.updateOne(
-      { course_id: course_id },
-      {
-        $inc: {
-          student_enrolled: 1,
-        },
-      }
+    await purchase.insertMany(purchasePayload);
+
+    // ✅ 2. Update all courses at once
+    await course.updateMany(
+      { course_id: { $in: course_ids } },
+      { $inc: { student_enrolled: 1 } }
     );
 
-    // await revenueModel.updateOne(
-    //   { instructor_id: instructor_id, revenue_month: month },
-    //   {
-    //     $inc: {
-    //       total_sales: 1,
-    //       total_amount: parseInt(amount),
-    //     },
-    //   }
-    // );
-
+    // ✅ 3. Fetch all chapters + topics once
     const chapters = await chapter
-      .find({ course_id }, { chapter_id: 1, chapter_rank: 1 })
-      .sort({ chapter_rank: 1 })
+      .find({ course_id: { $in: course_ids } })
       .lean();
 
-    const topics = await topic
-      .find({ course_id }, { topic_id: 1, chapter_id: 1, topic_rank: 1 })
-      .sort({ topic_rank: 1 })
-      .lean();
+    const topics = await topic.find({ course_id: { $in: course_ids } }).lean();
 
+    // ✅ 4. Group topics by course + chapter
     const topicMap = {};
-
     topics.forEach((t) => {
-      if (!topicMap[t.chapter_id]) {
-        topicMap[t.chapter_id] = [];
+      if (!topicMap[t.course_id]) topicMap[t.course_id] = {};
+      if (!topicMap[t.course_id][t.chapter_id]) {
+        topicMap[t.course_id][t.chapter_id] = [];
       }
-      topicMap[t.chapter_id].push(t);
+      topicMap[t.course_id][t.chapter_id].push(t);
     });
 
-    const payload = chapters.map((ch, index) => {
-      const chapterTopics = topicMap[ch.chapter_id] || [];
-      const firstTopic = chapterTopics.length > 0 ? chapterTopics[0] : null;
+    // ✅ 5. Prepare completion payload
+    let completionPayload = [];
 
-      const isFirstChapter = index == 0;
-      return {
-        completion_id: randomBytes(6).toString("hex"),
-        course_id,
-        student_id,
+    course_ids.forEach((course_id) => {
+      const courseChapters = chapters
+        .filter((ch) => ch.course_id === course_id)
+        .sort((a, b) => a.chapter_rank - b.chapter_rank);
 
-        chapter_id: ch.chapter_id,
-        current_chapter_id: ch.chapter_id,
-        chapter_rank: ch.chapter_rank,
-        course_status: "new",
-        // ✅ Only first chapter is active
-        chapter_status: isFirstChapter ? "inprogress" : "new",
-        // // ✅ ONLY first chapter gets topic
-        // current_topic_id: isFirstChapter ? firstTopic?.topic_id : null,
-        current_topic_id: firstTopic?.topic_id || null,
-        topic_array: [],
-      };
+      courseChapters.forEach((ch, index) => {
+        const chapterTopics = topicMap?.[course_id]?.[ch.chapter_id] || [];
+
+        const firstTopic = chapterTopics.length > 0 ? chapterTopics[0] : null;
+
+        const isFirstChapter = index === 0;
+
+        completionPayload.push({
+          completion_id: randomBytes(6).toString("hex"),
+          course_id,
+          student_id,
+          chapter_id: ch.chapter_id,
+          current_chapter_id: ch.chapter_id,
+          chapter_rank: ch.chapter_rank,
+          course_status: "new",
+          chapter_status: isFirstChapter ? "inprogress" : "new",
+          current_topic_id: firstTopic?.topic_id || null,
+          topic_array: [],
+        });
+      });
     });
-    await courseCompletionModel.insertMany(payload);
+
+    // ✅ 6. Insert all completions
+    await courseCompletionModel.insertMany(completionPayload);
+
     return {
       status: 201,
       message: CONSTANT.PAYLOAD.RECORD_CREATED_SUCCESSFULLY,
-      data: addNewCoursePayload,
+      data: purchasePayload,
     };
   } catch (error) {
     return {
       status: 412,
+      message: error.message,
+      data: [],
+    };
+  }
+};
+
+const getCertificate = async (
+  student_id,
+  page,
+  limit,
+  monthFilter,
+  yearFilter
+) => {
+  try {
+    const skip = (page - 1) * limit;
+    let timeCheck = {};
+
+    if (monthFilter || yearFilter) {
+      const dateConditions = [];
+      monthFilter = await getMonthMap(monthFilter);
+      if (monthFilter) {
+        dateConditions.push({
+          $eq: [{ $month: "$createdAt" }, Number(monthFilter)],
+        });
+      }
+
+      if (yearFilter) {
+        dateConditions.push({
+          $eq: [{ $year: "$createdAt" }, Number(yearFilter)],
+        });
+      }
+
+      timeCheck = {
+        $expr: {
+          $and: dateConditions,
+        },
+      };
+    }
+    const getCertificatePayload = await certificate.aggregate([
+      {
+        $match: {
+          ...timeCheck,
+          student_id: student_id,
+        },
+      },
+      // {
+      //   $lookup: {
+      //     from: "students",
+      //     localField: "student_id",
+      //     foreignField: "student_id",
+      //     as: "student",
+      //   },
+      // },
+      {
+        $lookup: {
+          from: "courses",
+          localField: "course_id",
+          foreignField: "course_id",
+          as: "course",
+        },
+      },
+      {
+        $lookup: {
+          from: "topics",
+          localField: "course_id",
+          foreignField: "course_id",
+          as: "topics",
+        },
+      },
+      {
+        $lookup: {
+          from: "submissions",
+          let: {
+            courseId: "$course_id",
+            studentId: "$student_id",
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$course_id", "$$courseId"] },
+                    { $eq: ["$student_id", "$$studentId"] },
+                  ],
+                },
+              },
+            },
+
+            // latest attempt per quiz
+            {
+              $sort: { quiz_id: 1, quiz_attempt: -1 },
+            },
+            {
+              $group: {
+                _id: "$quiz_id",
+                total_score: { $first: "$total_score" },
+                quiz_total_points: { $first: "$quiz_total_points" },
+              },
+            },
+
+            // sum all quizzes
+            {
+              $group: {
+                _id: null,
+                total_score: { $sum: "$total_score" },
+                total_points: { $sum: "$quiz_total_points" },
+              },
+            },
+          ],
+          as: "student_score",
+        },
+      },
+      {
+        $addFields: {
+          avg_score: {
+            $cond: [
+              {
+                $eq: [
+                  {
+                    $ifNull: [
+                      { $arrayElemAt: ["$student_score.total_points", 0] },
+                      0,
+                    ],
+                  },
+                  0,
+                ],
+              },
+              0,
+              {
+                $round: [
+                  {
+                    $multiply: [
+                      {
+                        $divide: [
+                          { $arrayElemAt: ["$student_score.total_score", 0] },
+                          { $arrayElemAt: ["$student_score.total_points", 0] },
+                        ],
+                      },
+                      10,
+                    ],
+                  },
+                  2,
+                ],
+              },
+            ],
+          },
+          avg_total_marks: {
+            $cond: [
+              { $eq: [{ $size: "$topics" }, 0] },
+              0,
+              {
+                $round: [
+                  {
+                    $divide: [
+                      { $arrayElemAt: ["$student_score.total_points", 0] },
+                      {
+                        $size: {
+                          $filter: {
+                            input: { $ifNull: ["$topics", []] },
+                            as: "t",
+                            cond: {
+                              $and: [
+                                { $ne: ["$$t.quiz_id", null] },
+                                { $ne: ["$$t.quiz_id", ""] },
+                              ],
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                  2,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { issue_date: -1 } },
+      { $skip: Number(skip) },
+      { $limit: Number(limit) },
+      {
+        $project: {
+          certificate_id: 1,
+          student_id: 1,
+          // student_firstname: {
+          //   $arrayElemAt: ["$student.student_first_name", 0],
+          // },
+          // student_lastname: {
+          //   $arrayElemAt: ["$student.student_last_name", 0],
+          // },
+          // student_avatar: {
+          //   $arrayElemAt: ["$student.student_avatar", 0],
+          // },
+          // student_skills: {
+          //   $ifNull: [
+          //     {
+          //       $arrayElemAt: ["$student.student_skills", 0],
+          //     },
+          //     [],
+          //   ],
+          // },
+          course_id: 1,
+          course_title: {
+            $arrayElemAt: ["$course.course_title", 0],
+          },
+          course_thumbnail: {
+            $arrayElemAt: ["$course.course_thumbnail", 0],
+          },
+          course_description: {
+            $arrayElemAt: ["$course.course_description", 0],
+          },
+          total_videos: {
+            $size: {
+              $filter: {
+                input: {
+                  $ifNull: ["$topics", []],
+                },
+                as: "t",
+                cond: {
+                  $and: [
+                    { $ne: ["$$t.video_url", null] },
+                    { $ne: ["$$t.video_url", ""] },
+                  ],
+                },
+              },
+            },
+          },
+          total_quiz: {
+            $size: {
+              $filter: {
+                input: {
+                  $ifNull: ["$topics", []],
+                },
+                as: "t",
+                cond: {
+                  $and: [
+                    { $ne: ["$$t.quiz_id", null] },
+                    { $ne: ["$$t.quiz_id", ""] },
+                  ],
+                },
+              },
+            },
+          },
+          total_score: {
+            $ifNull: [{ $arrayElemAt: ["$student_score.total_score", 0] }, 0],
+          },
+          total_points: {
+            $ifNull: [{ $arrayElemAt: ["$student_score.total_points", 0] }, 0],
+          },
+          avg_score: { $ifNull: ["$avg_score", 0] },
+          avg_total_marks: { $ifNull: ["$avg_total_marks", 0] },
+          certificate_url: 1,
+          createdAt: "$issued_date",
+        },
+      },
+    ]);
+
+    const count = await certificate.countDocuments({
+      ...timeCheck,
+      student_id: student_id,
+    });
+    return getCertificatePayload.length
+      ? {
+          status: 200,
+          message: CONSTANT.PAYLOAD.RECORD_FETCHED_SUCCESSFULLY,
+          count: count,
+          data: getCertificatePayload,
+        }
+      : {
+          status: 409,
+          message: CONSTANT.STATUS.NOT_FOUND,
+          data: [],
+        };
+  } catch (error) {
+    return {
+      status: 412,
+      message: error.message,
+      data: [],
+    };
+  }
+};
+
+const addNewCertificate = async (course_ids, student_id) => {
+  try {
+    const certificatePayload = course_ids.map((course_id) => ({
+      certificate_id: randomBytes(6).toString("hex"),
+      student_id,
+      course_id,
+      certificate_url:
+        "https://www.rd.usda.gov/sites/default/files/pdf-sample_0.pdf",
+      certicate_type: null,
+      quiz_badge_id: null,
+      course_badge_id: null,
+      is_free: true,
+      issued_date: new Date(),
+    }));
+
+    const result = await certificateModel.insertMany(certificatePayload);
+
+    return {
+      status: 201,
+      message: CONSTANT.PAYLOAD.RECORD_CREATED_SUCCESSFULLY,
+      data: result,
+    };
+  } catch (error) {
+    return {
+      status: 412,
+      message: error.message,
+      data: [],
+    };
+  }
+};
+
+const getMonthlyStats = async (monthFilter, yearFilter) => {
+  try {
+    const MONTH_NAMES = [
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december",
+    ];
+
+    const currentYear = yearFilter
+      ? Number(yearFilter)
+      : new Date().getFullYear();
+
+    let matchFilter = {
+      createdAt: {
+        $gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+        $lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+      },
+    };
+
+    let monthIndex = null;
+
+    if (monthFilter) {
+      monthIndex = MONTH_NAMES.indexOf(monthFilter.toLowerCase());
+
+      if (monthIndex === -1) {
+        return { status: 409, message: "Invalid month name", data: [] };
+      }
+
+      const start = new Date(currentYear, monthIndex, 1);
+      const end = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59, 999); // ✅ FIX
+
+      matchFilter.createdAt = { $gte: start, $lte: end };
+    }
+
+    const result = await student.aggregate([
+      {
+        $facet: {
+          // ✅ ALL MONTH DATA (NO month filter)
+          monthly: [
+            {
+              $match: {
+                createdAt: {
+                  $gte: new Date(`${currentYear}-01-01T00:00:00.000Z`),
+                  $lte: new Date(`${currentYear}-12-31T23:59:59.999Z`),
+                },
+              },
+            },
+            {
+              $group: {
+                _id: { $month: "$createdAt" },
+                total_student: { $sum: 1 },
+              },
+            },
+          ],
+
+          // ✅ FILTERED DATA (month/year)
+          filtered: [
+            { $match: matchFilter },
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+              },
+            },
+          ],
+
+          active: [
+            { $match: { student_status: "active" } },
+            { $count: "count" },
+          ],
+
+          suspended: [
+            { $match: { student_status: "suspended" } },
+            { $count: "count" },
+          ],
+        },
+      },
+    ]);
+
+    // DEFAULT MONTH STRUCTURE
+    const monthlyData = {};
+    MONTH_NAMES.forEach((m) => {
+      monthlyData[m] = { total_student: 0 };
+    });
+
+    // MAP DATA
+    result[0].monthly.forEach((item) => {
+      const monthName = MONTH_NAMES[item._id - 1];
+      monthlyData[monthName].total_student = item.total_student;
+    });
+
+    // ✅ FIXED HERE
+    const finalData = monthlyData; // ✅ ALWAYS ALL MONTHS
+
+    const totalstudent = await student.countDocuments();
+
+    return {
+      status: 200,
+      message: "Student monthly stats fetched successfully",
+      year: currentYear,
+      totalstudent,
+      total_active_student: result[0].active[0]?.count || 0,
+      total_suspended_student: result[0].suspended[0]?.count || 0,
+      data: finalData,
+    };
+  } catch (error) {
+    return {
+      status: 500,
       message: error.message,
       data: [],
     };
@@ -1431,6 +1972,9 @@ module.exports = {
   updateStatus,
   getCourse,
   addNewCourse,
+  getCertificate,
+  addNewCertificate,
+  getMonthlyStats,
   forgetPassword,
   verifyOtp,
   changePassword,
